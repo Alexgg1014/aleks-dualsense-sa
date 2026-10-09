@@ -30,7 +30,7 @@ Native **DualSense** support for **GTA San Andreas (PC 1.0 US)**: adaptive trigg
 
 - GTA San Andreas **1.0 US** with an ASI Loader or Modloader.
 - **GInput**: it is what reads the controller for the game. Without it the game does not see the pad.
-- A **DualSense**, **DualSense Edge** or **DualShock 4** on a **USB cable** (or Sony's DualShock 4 wireless adapter). Bluetooth is not supported.
+- A **DualSense**, **DualSense Edge** or **DualShock 4** on a **USB cable** (or Sony's DualShock 4 wireless adapter). Bluetooth is not supported. With both plugged in, the DualSense is used (`Controller` in the INI picks one).
 - **Steam Input off** for GTA San Andreas (Steam > Library > right click the game > Properties > Controller).
 
 ## Install

@@ -65,7 +65,7 @@ bool readable(uintptr_t a,size_t n){MEMORY_BASIC_INFORMATION m{};if(!VirtualQuer
 
 // ---------- settings ----------
 struct Settings{
-    bool enabled=true,allowBackground=false,touchpadAsBack=true,muteToggles=true,logEvents=true;int deadzone=0;
+    bool enabled=true,allowBackground=false,touchpadAsBack=true,muteToggles=true,logEvents=true;int deadzone=0;int controller=0;   // 0 auto (DualSense first), 1 DualSense only, 2 DualShock 4 only
     bool triggers=true,weaponTriggers=true,fireAtClick=true,drivingTriggers=true,speedResponse=true;std::atomic<int> weaponStrength{70},drivingStrength{25};   // atomic: changed in game with Mute + D-pad
     std::atomic<int> vibration{65};int drivingVibration=60;bool gameRumble=true,shots=true,damage=true,explosions=true,crashes=true,terrain=true;
     bool hdHaptics=true,footsteps=true;   // v2: HD haptics through the pad's audio channels 3-4 (falls back to rumble if unavailable)
@@ -112,7 +112,7 @@ void readSettings(){   // every key falls back to the value already loaded
     Settings& c=cfg;
     c.enabled=iniBool(L"General",L"Enabled",c.enabled);c.allowBackground=iniBool(L"General",L"AllowBackgroundInput",c.allowBackground);
     c.touchpadAsBack=iniBool(L"General",L"TouchpadAsBack",c.touchpadAsBack);c.muteToggles=iniBool(L"General",L"MuteTogglesTriggers",c.muteToggles);
-    c.deadzone=std::clamp(iniInt(L"General",L"StickDeadzone",c.deadzone),0,50);c.logEvents=iniBool(L"General",L"LogEvents",c.logEvents);
+    c.deadzone=std::clamp(iniInt(L"General",L"StickDeadzone",c.deadzone),0,50);c.controller=std::clamp(iniInt(L"General",L"Controller",c.controller),0,2);c.logEvents=iniBool(L"General",L"LogEvents",c.logEvents);
     c.triggers=iniBool(L"Triggers",L"AdaptiveTriggers",c.triggers);c.weaponTriggers=iniBool(L"Triggers",L"WeaponTriggers",c.weaponTriggers);
     c.weaponStrength=std::clamp(iniInt(L"Triggers",L"WeaponStrength",c.weaponStrength),0,150);c.fireAtClick=iniBool(L"Triggers",L"FireAtClick",c.fireAtClick);
     c.drivingTriggers=iniBool(L"Triggers",L"DrivingTriggers",c.drivingTriggers);c.drivingStrength=std::clamp(iniInt(L"Triggers",L"DrivingStrength",c.drivingStrength),0,150);
@@ -132,7 +132,7 @@ void readSettings(){   // every key falls back to the value already loaded
 }
 void loadSettings(){
     Settings& c=cfg;   // code defaults first (also used by "Restablecer todo")
-    c.enabled=c.touchpadAsBack=c.muteToggles=c.logEvents=true;c.allowBackground=false;c.deadzone=0;
+    c.enabled=c.touchpadAsBack=c.muteToggles=c.logEvents=true;c.allowBackground=false;c.deadzone=0;c.controller=0;
     c.triggers=c.weaponTriggers=c.fireAtClick=c.drivingTriggers=c.speedResponse=true;c.weaponStrength=70;c.drivingStrength=25;
     c.vibration=65;c.drivingVibration=60;c.gameRumble=c.shots=c.damage=c.explosions=c.crashes=c.terrain=true;c.hdHaptics=c.footsteps=true;
     c.lightbar=c.healthColor=c.armourLeds=c.speedometer=c.policeFlashes=true;c.brightness=100;c.speedKmh=160;c.menu={0,80,200};menuOpenWith=0;menuKey=VK_F11;menuLanguage=0;
@@ -596,6 +596,9 @@ bool tryOpen(){
     HDEVINFO set=SetupDiGetClassDevsW(&guid,nullptr,nullptr,DIGCF_PRESENT|DIGCF_DEVICEINTERFACE);
     if(set==INVALID_HANDLE_VALUE)return false;
     bool opened=false;SP_DEVICE_INTERFACE_DATA data{};data.cbSize=sizeof data;
+    // Pass 0 looks for a DualSense, pass 1 for a DualShock 4, so a DualSense wins when both are plugged in ([General] Controller).
+    for(int pass=0;pass<2&&!opened;++pass){
+    if((pass==0&&cfg.controller==2)||(pass==1&&cfg.controller==1))continue;
     for(DWORD i=0;!opened&&SetupDiEnumDeviceInterfaces(set,nullptr,&guid,i,&data);++i){
         DWORD need=0;SetupDiGetDeviceInterfaceDetailW(set,&data,nullptr,0,&need,nullptr);if(!need||need>4096)continue;
         BYTE buffer[4096];auto* detail=reinterpret_cast<SP_DEVICE_INTERFACE_DETAIL_DATA_W*>(buffer);detail->cbSize=sizeof(SP_DEVICE_INTERFACE_DETAIL_DATA_W);
@@ -603,8 +606,8 @@ bool tryOpen(){
         // Attributes need no access rights, so other HID devices are never opened for reading.
         HANDLE probe=CreateFileW(detail->DevicePath,0,FILE_SHARE_READ|FILE_SHARE_WRITE,nullptr,OPEN_EXISTING,0,nullptr);
         if(probe==INVALID_HANDLE_VALUE)continue;
-        HIDD_ATTRIBUTES at{};at.Size=sizeof at;bool match=HidD_GetAttributes(probe,&at)&&at.VendorID==0x054C&&(at.ProductID==0x0CE6||at.ProductID==0x0DF2||   // DualSense, DualSense Edge
-            at.ProductID==0x05C4||at.ProductID==0x09CC||at.ProductID==0x0BA0);   // DualShock 4 v1, v2, Sony wireless adapter
+        HIDD_ATTRIBUTES at{};at.Size=sizeof at;bool match=HidD_GetAttributes(probe,&at)&&at.VendorID==0x054C&&(pass==0?(at.ProductID==0x0CE6||at.ProductID==0x0DF2):   // DualSense, DualSense Edge
+            (at.ProductID==0x05C4||at.ProductID==0x09CC||at.ProductID==0x0BA0));   // DualShock 4 v1, v2, Sony wireless adapter
         CloseHandle(probe);if(!match)continue;
         HANDLE h=CreateFileW(detail->DevicePath,GENERIC_READ|GENERIC_WRITE,FILE_SHARE_READ|FILE_SHARE_WRITE,nullptr,OPEN_EXISTING,FILE_FLAG_OVERLAPPED,nullptr);
         if(h==INVALID_HANDLE_VALUE){if(openFailures++<5)logf("Sony controller found but CreateFile failed (error %lu): another program may own it exclusively (DS4Windows/DSX hide mode)",GetLastError());continue;}
@@ -627,6 +630,7 @@ bool tryOpen(){
         char path[300];WideCharToMultiByte(CP_UTF8,0,detail->DevicePath,-1,path,sizeof path,nullptr,nullptr);
         logf("%s connected over USB: VID %04X PID %04X, input %u bytes, output %u bytes (%s)",padName(),at.VendorID,at.ProductID,caps.InputReportByteLength,caps.OutputReportByteLength,path);
         opened=true;
+    }
     }
     SetupDiDestroyDeviceInfoList(set);
     if(opened){padConnected=true;reportsIn=0;}
