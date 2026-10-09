@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/logo.png" alt="Alek's DualSense SA" width="520"></p>
+
 # Alek's DualSense SA
 
 Native **DualSense** support for **GTA San Andreas (PC 1.0 US)**: adaptive triggers for every weapon and vehicle, **HD haptics** played through the controller's own actuators, and a lightbar that reacts to the game. No Steam Input, DSX, DS4Windows or ViGEm needed.
