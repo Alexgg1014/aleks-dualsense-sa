@@ -23,6 +23,7 @@ const char* const translations[][2]={
     {"Sentir gatillo","Feel a trigger"},{"Probar háptica","Try haptics"},{"Pulso de vibración","Rumble pulse"},{"Restablecer todo","Reset everything"},
     {"Abrir menú con","Open menu with"},{"Mute apaga gatillos","Mute toggles triggers"},{"Eventos en el log","Log events"},{"Idioma","Language"},
     {"Sí","Yes"},{"Pulsa X","Press X"},{"Pulsa X otra vez","Press X again"},{"conectado por USB","connected over USB"},{"sin control","no controller"},
+    {"DualShock 4 por USB","DualShock 4 over USB"},{"El DualShock 4 no tiene gatillos adaptativos ni háptica HD.","The DualShock 4 has no adaptive triggers or HD haptics."},
     {"Gatillos: se sienten al momento. Háptica: elige y pulsa X.","Triggers: felt right away. Haptics: pick one and press X."},
     {"Mute + arriba/abajo también cambia la vibración sin abrir el menú.","Mute + up/down also changes vibration without the menu."},
     {"Se guarda en Documentos\\GTA San Andreas User Files.","Saved in Documents\\GTA San Andreas User Files."},
@@ -279,7 +280,7 @@ void drawMenu(IDirect3DDevice9* dev,float w,float h){
     float bodyH=rowH*static_cast<float>(std::max(count,7))+44*k,ph=headerH+tabH+bodyH+footH;
     rect(dev,x0,y0,pw,ph,0xC8000000);
     text(dev,x0+pad,y0+8*k,"DualSense",ACCENT,52*k,LEFT,titleFont);
-    text(dev,x0+pw-pad,y0+30*k,padConnected?"conectado por USB":"sin control",padConnected?SA_DIM:0xFFF07C7C,17*k,RIGHT);
+    text(dev,x0+pw-pad,y0+30*k,!padConnected?"sin control":isDs4()?"DualShock 4 por USB":"conectado por USB",padConnected?SA_DIM:0xFFF07C7C,17*k,RIGHT);
     rect(dev,x0+pad,y0+headerH-2*k,pw-pad*2,2*k,withAlpha(ACCENT,0x70));
     float ty=y0+headerH,cw=(pw-pad*2)/TAB_COUNT,target=x0+pad+cw*menuTab;if(tabX<0)tabX=target;tabX=approach(tabX,target,22);
     for(int t=0;t<TAB_COUNT;++t)text(dev,x0+pad+cw*t+cw/2,ty+12*k,tabNames[t],t==menuTab?SA_TEXT:SA_DIM,18*k,CENTER);
@@ -297,7 +298,8 @@ void drawMenu(IDirect3DDevice9* dev,float w,float h){
         text(dev,x0+pw-pad,y,v.c_str(),sel?ACCENT:SA_DIM,20*k,RIGHT);
     }
     // Footer note per tab
-    const char* note=menuTab==TAB_TEST?"Gatillos: se sienten al momento. Háptica: elige y pulsa X.":
+    const char* note=isDs4()&&(menuTab==TAB_TRIGGERS||menuTab==TAB_VIBRATION)?"El DualShock 4 no tiene gatillos adaptativos ni háptica HD.":
+        menuTab==TAB_TEST?"Gatillos: se sienten al momento. Háptica: elige y pulsa X.":
         menuTab==TAB_VIBRATION?"Mute + arriba/abajo también cambia la vibración sin abrir el menú.":
         menuTab==TAB_OPTIONS?"Se guarda en Documentos\\GTA San Andreas User Files.":"Los cambios se sienten al momento.";
     text(dev,x0+pad,by+rowH*static_cast<float>(std::max(count,7))+10*k,note,SA_DIM,16*k);

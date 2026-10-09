@@ -33,6 +33,14 @@ int main(){
     // Fire at the click.
     CHECK(remap_fire(100,0)==100&&remap_fire(100,130)==0&&remap_fire(130,130)==255&&remap_fire(255,130)==255);
 
+    // --- DualShock 4 (USB) ---
+    {uint8_t d[64]{};d[0]=0x01;d[1]=0;d[2]=255;d[3]=128;d[4]=128;d[5]=0x20|0x06;d[6]=0x10|0x02;d[7]=0x01|0x04;d[8]=40;d[9]=250;d[30]=0x10|0x07;
+        Input in4;CHECK(parse_ds4_usb_input(d,64,in4));
+        CHECK(in4.cross&&in4.hat==6&&in4.create&&in4.r1&&in4.ps&&!in4.mute&&in4.l2==40&&in4.r2==250&&in4.charging&&in4.battery==70);
+        XPad p4=to_xinput(in4,true,0);CHECK((p4.buttons&(X_A|X_LEFT|X_BACK|X_RB))==(X_A|X_LEFT|X_BACK|X_RB)&&p4.lx==-32768&&p4.ly==-32768);
+        d[0]=0x11;CHECK(!parse_ds4_usb_input(d,64,in4));   // Bluetooth report: not supported
+        OutState s4;s4.rumL=200;s4.rumR=90;s4.light={10,20,30};uint8_t o4[DS4_OUTPUT_SIZE];build_ds4_output(s4,o4);
+        CHECK(o4[0]==0x05&&o4[1]==0x03&&o4[4]==90&&o4[5]==200&&o4[6]==10&&o4[7]==20&&o4[8]==30&&o4[31]==0);}
     // --- trigger effect encodings (Sony official modes) ---
     CHECK(bytes(fx_off(),{0x05}));
     CHECK(bytes(fx_feedback(0,8),{0x21,0xFF,0x03,0xFF,0xFF,0xFF,0x3F}));          // all zones, force 7 in each 3-bit slot

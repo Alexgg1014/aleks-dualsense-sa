@@ -75,6 +75,9 @@ struct Settings{
 HMODULE self=nullptr;wchar_t folder[MAX_PATH]{},iniPath[MAX_PATH]{},logPath[MAX_PATH]{};
 CRITICAL_SECTION logLock,stateLock;unsigned long long startTick=0;DWORD mainThread=0;bool gameOk=false,dryRun=false;   // dryRun: not inside GTA SA (offline harness), the pad is read but never written
 std::atomic<bool> padConnected{false},stopping{false},userTriggersOff{false},playerDriving{false};
+std::atomic<int> padModel{0};   // 0 DualSense, 1 DualSense Edge, 2 DualShock 4 (input, rumble and lightbar only)
+bool isDs4(){return padModel==2;}
+const char* padName(){return padModel==2?"DualShock 4":padModel==1?"DualSense Edge":"DualSense";}
 
 void log(const char* message){
     EnterCriticalSection(&logLock);
@@ -567,6 +570,7 @@ void gameTick(){
     if(!padConnected)return;
     unsigned long long now=GetTickCount64();if(now-lastSampleAt<5)return;lastSampleAt=now;
     int fp=0;ds::OutState o=computeOut(now,fp);
+    if(isDs4())fp=0;   // no trigger click on a DualShock 4, so the game reads the trigger as usual
     if(menuOpen){ds::TriggerPair t;if(!menuTriggerPreview(t)){t.l2=t.r2=ds::fx_off();}o.l2=t.l2;o.r2=t.r2;fp=0;}
     if(now<pulseUntil)o.rumL=o.rumR=static_cast<uint8_t>(cfg.vibration*255/100);
     EnterCriticalSection(&stateLock);desired=o;desiredAt=now;firePoint=fp;LeaveCriticalSection(&stateLock);
@@ -585,7 +589,7 @@ void closeDevice(const char* why){
     CloseHandle(dev.h);dev.h=INVALID_HANDLE_VALUE;dev.readPending=false;
     padConnected=false;gameRumbleL=gameRumbleR=0;
     EnterCriticalSection(&stateLock);pad=ds::XPad{};firePoint=0;LeaveCriticalSection(&stateLock);
-    logf("DualSense disconnected (%s); XInput falls back to the system, waiting for the cable",why);
+    logf("%s disconnected (%s); XInput falls back to the system, waiting for the cable",padName(),why);
 }
 bool tryOpen(){
     GUID guid;HidD_GetHidGuid(&guid);
@@ -599,25 +603,29 @@ bool tryOpen(){
         // Attributes need no access rights, so other HID devices are never opened for reading.
         HANDLE probe=CreateFileW(detail->DevicePath,0,FILE_SHARE_READ|FILE_SHARE_WRITE,nullptr,OPEN_EXISTING,0,nullptr);
         if(probe==INVALID_HANDLE_VALUE)continue;
-        HIDD_ATTRIBUTES at{};at.Size=sizeof at;bool match=HidD_GetAttributes(probe,&at)&&at.VendorID==0x054C&&(at.ProductID==0x0CE6||at.ProductID==0x0DF2);
+        HIDD_ATTRIBUTES at{};at.Size=sizeof at;bool match=HidD_GetAttributes(probe,&at)&&at.VendorID==0x054C&&(at.ProductID==0x0CE6||at.ProductID==0x0DF2||   // DualSense, DualSense Edge
+            at.ProductID==0x05C4||at.ProductID==0x09CC||at.ProductID==0x0BA0);   // DualShock 4 v1, v2, Sony wireless adapter
         CloseHandle(probe);if(!match)continue;
         HANDLE h=CreateFileW(detail->DevicePath,GENERIC_READ|GENERIC_WRITE,FILE_SHARE_READ|FILE_SHARE_WRITE,nullptr,OPEN_EXISTING,FILE_FLAG_OVERLAPPED,nullptr);
-        if(h==INVALID_HANDLE_VALUE){if(openFailures++<5)logf("DualSense found but CreateFile failed (error %lu): another program may own it exclusively (DS4Windows/DSX hide mode)",GetLastError());continue;}
+        if(h==INVALID_HANDLE_VALUE){if(openFailures++<5)logf("Sony controller found but CreateFile failed (error %lu): another program may own it exclusively (DS4Windows/DSX hide mode)",GetLastError());continue;}
         PHIDP_PREPARSED_DATA pre=nullptr;HIDP_CAPS caps{};
         if(HidD_GetPreparsedData(h,&pre)){HidP_GetCaps(pre,&caps);HidD_FreePreparsedData(pre);}
         if(caps.InputReportByteLength!=64){
-            if(!loggedBluetooth){loggedBluetooth=true;logf("DualSense found with %u-byte input reports (Bluetooth). Version 1 needs the USB cable; ignoring it.",caps.InputReportByteLength);}
+            if(!loggedBluetooth){loggedBluetooth=true;logf("Sony controller found with %u-byte input reports (Bluetooth); it needs the USB cable, ignoring it.",caps.InputReportByteLength);}
             CloseHandle(h);continue;
         }
-        dev.h=h;dev.inLen=caps.InputReportByteLength;dev.outLen=std::clamp<USHORT>(caps.OutputReportByteLength,static_cast<USHORT>(ds::USB_OUTPUT_SIZE),128);
-        dev.vibrationV2=false;dev.setupLights=true;dev.writeErrors=0;
-        BYTE fw[256]{};fw[0]=0x20;unsigned update=0;ULONG fwLen=std::min<ULONG>(caps.FeatureReportByteLength,sizeof fw);
-        if(fwLen>=64&&HidD_GetFeature(h,fw,fwLen)){update=fw[44]|(fw[45]<<8);dev.vibrationV2=update>=0x0215||at.ProductID==0x0DF2;   // Linux: DS_FEATURE_VERSION(2,21); the Edge always uses v2
-            logf("firmware: hardware %08lX, firmware %08lX, update %04X -> %s rumble",static_cast<unsigned long>(fw[24]|(fw[25]<<8)|(fw[26]<<16)|(static_cast<unsigned>(fw[27])<<24)),
-                static_cast<unsigned long>(fw[28]|(fw[29]<<8)|(fw[30]<<16)|(static_cast<unsigned>(fw[31])<<24)),update,dev.vibrationV2?"v2":"classic");}
-        else log("firmware report unavailable; classic rumble");
+        bool ds4=at.ProductID==0x05C4||at.ProductID==0x09CC||at.ProductID==0x0BA0;padModel=ds4?2:at.ProductID==0x0DF2?1:0;
+        dev.h=h;dev.inLen=caps.InputReportByteLength;dev.outLen=std::clamp<USHORT>(caps.OutputReportByteLength,static_cast<USHORT>(ds4?ds::DS4_OUTPUT_SIZE:ds::USB_OUTPUT_SIZE),128);
+        dev.vibrationV2=false;dev.setupLights=!ds4;dev.writeErrors=0;
+        if(!ds4){
+            BYTE fw[256]{};fw[0]=0x20;unsigned update=0;ULONG fwLen=std::min<ULONG>(caps.FeatureReportByteLength,sizeof fw);
+            if(fwLen>=64&&HidD_GetFeature(h,fw,fwLen)){update=fw[44]|(fw[45]<<8);dev.vibrationV2=update>=0x0215||at.ProductID==0x0DF2;   // Linux: DS_FEATURE_VERSION(2,21); the Edge always uses v2
+                logf("firmware: hardware %08lX, firmware %08lX, update %04X -> %s rumble",static_cast<unsigned long>(fw[24]|(fw[25]<<8)|(fw[26]<<16)|(static_cast<unsigned>(fw[27])<<24)),
+                    static_cast<unsigned long>(fw[28]|(fw[29]<<8)|(fw[30]<<16)|(static_cast<unsigned>(fw[31])<<24)),update,dev.vibrationV2?"v2":"classic");}
+            else log("firmware report unavailable; classic rumble");
+        }
         char path[300];WideCharToMultiByte(CP_UTF8,0,detail->DevicePath,-1,path,sizeof path,nullptr,nullptr);
-        logf("DualSense%s connected over USB: VID %04X PID %04X, input %u bytes, output %u bytes (%s)",at.ProductID==0x0DF2?" Edge":"",at.VendorID,at.ProductID,caps.InputReportByteLength,caps.OutputReportByteLength,path);
+        logf("%s connected over USB: VID %04X PID %04X, input %u bytes, output %u bytes (%s)",padName(),at.VendorID,at.ProductID,caps.InputReportByteLength,caps.OutputReportByteLength,path);
         opened=true;
     }
     SetupDiDestroyDeviceInfoList(set);
@@ -625,7 +633,7 @@ bool tryOpen(){
     return opened;
 }
 bool writeReport(const ds::OutState& s,bool release,OVERLAPPED& ov){
-    BYTE out[128]{};ds::build_output(s,dev.vibrationV2,dev.setupLights,release,out);
+    BYTE out[128]{};if(isDs4())ds::build_ds4_output(s,out);else ds::build_output(s,dev.vibrationV2,dev.setupLights,release,out);
     ResetEvent(ov.hEvent);DWORD done=0;
     BOOL ok=WriteFile(dev.h,out,dev.outLen,nullptr,&ov);
     if(!ok&&GetLastError()==ERROR_IO_PENDING){
@@ -647,12 +655,14 @@ void muteAdjust(const ds::Input& in){
             adjustAt=GetTickCount64();adjustLevel=v;adjustRumble=true;logf("Mute + D-pad: vibration %d%%",v);hap(hx::Hit{150,60,0.25f,0.08f,0.3f,1.f});
         }else if(fresh&&in.hat==2){muteCombo=true;if(menuOpenWith==0||menuOpen)menuToggleRequest=true;}
     }else if(lastInput.mute){
-        if(!muteCombo&&cfg.muteToggles){bool off=!userTriggersOff;userTriggersOff=off;logf("Mute tapped: adaptive triggers %s",off?"OFF (mic LED on)":"ON");}
+        if(!muteCombo&&cfg.muteToggles&&!isDs4()){bool off=!userTriggersOff;userTriggersOff=off;logf("Mute tapped: adaptive triggers %s",off?"OFF (mic LED on)":"ON");}
         muteCombo=false;
     }
 }
 void handleInput(const BYTE* r,DWORD n){
-    ds::Input in;if(!ds::parse_usb_input(r,n,in))return;
+    ds::Input in;
+    if(isDs4()){if(!ds::parse_ds4_usb_input(r,n,in))return;in.mute=in.ps;in.ps=false;}   // no Mute button: PS is the combo key
+    else if(!ds::parse_usb_input(r,n,in))return;
     ++reportsIn;
     if(reportsIn==1)logf("first input report: battery %u%%%s",in.battery,in.charging?" (charging)":"");
     muteAdjust(in);
@@ -731,7 +741,7 @@ DWORD WINAPI deviceThread(void*){
             ds::OutState n=neutralOut();n.light=at?want.light:n.light;n.leds=at?want.leds:n.leds;want=n;
         }else warnedWatchdog=false;
         want.micLed=userTriggersOff;
-        want.hd=hdActive;
+        want.hd=hdActive&&!isDs4();
         if(adjustAt&&now-adjustAt<1500){   // Mute + D-pad feedback: white lightbar, LEDs = new level, a short buzz for vibration
             want.light=ds::dim(ds::Rgb{255,255,255},cfg.brightness/100.f);want.leds=ds::gauge_leds(adjustLevel/100.f);
             if(adjustRumble&&now-adjustAt<250)want.rumL=want.rumR=static_cast<uint8_t>(adjustLevel*255/100);}

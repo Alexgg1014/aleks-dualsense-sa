@@ -7,6 +7,7 @@ Native **DualSense** support for **GTA San Andreas (PC 1.0 US)**: adaptive trigg
 ## Features
 
 - **Native input.** The DualSense is read directly over USB and shown to the whole game as XInput controller 0. GInput, the game and other mods keep working without changes.
+- **DualShock 4 too.** A DualShock 4 over USB gets native input, rumble and the reactive lightbar (it has no adaptive triggers or HD actuators). Its combo key is **PS** instead of Mute.
 - **Adaptive triggers**, different for each weapon:
   - pistols with a trigger click, and the shot fires right at the click,
   - shotguns with a hard pull and a dry kick,
@@ -29,7 +30,7 @@ Native **DualSense** support for **GTA San Andreas (PC 1.0 US)**: adaptive trigg
 
 - GTA San Andreas **1.0 US** with an ASI Loader or Modloader.
 - **GInput**: it is what reads the controller for the game. Without it the game does not see the pad.
-- A **DualSense** or **DualSense Edge** on a **USB cable**. Bluetooth is not supported.
+- A **DualSense**, **DualSense Edge** or **DualShock 4** on a **USB cable** (or Sony's DualShock 4 wireless adapter). Bluetooth is not supported.
 - **Steam Input off** for GTA San Andreas (Steam > Library > right click the game > Properties > Controller).
 
 ## Install
@@ -38,7 +39,7 @@ Native **DualSense** support for **GTA San Andreas (PC 1.0 US)**: adaptive trigg
 2. With Modloader, copy the `Aleks DualSense SA` folder into `modloader`. Otherwise, copy `Aleks.DualSense.SA.asi` and `Aleks.DualSense.SA.ini` into the game folder.
 3. Plug in the controller and start the game.
 
-**Controls:** Mute + Right opens the menu (or F11). Mute + Up/Down changes the vibration. A tap on Mute turns the adaptive triggers on or off. Settings changed in game are saved to `Documents\GTA San Andreas User Files\Aleks DualSense SA.ini`. Full instructions are in `LEEME - README.txt` inside the zip.
+**Controls:** Mute + Right opens the menu (or F11). Mute + Up/Down changes the vibration. A tap on Mute turns the adaptive triggers on or off. On a DualShock 4, hold PS instead of Mute. Settings changed in game are saved to `Documents\GTA San Andreas User Files\Aleks DualSense SA.ini`. Full instructions are in `LEEME - README.txt` inside the zip.
 
 If something breaks, open an issue and attach `Aleks.DualSense.SA.log` from the mod folder.
 

@@ -8,6 +8,8 @@ REQUIREMENTS
 - GTA San Andreas 1.0 US with an ASI Loader or Modloader.
 - GInput (it reads the controller for the game). Without GInput the game does not see the pad.
 - A DualSense (or DualSense Edge) on a USB cable. Bluetooth is not supported.
+- A DualShock 4 on USB also works: input, rumble and lightbar (no adaptive triggers or HD haptics).
+  On the DualShock 4, hold PS instead of Mute for the combos.
 - Steam Input OFF for GTA San Andreas (Steam > Library > right click the game > Properties > Controller).
 - Close DS4Windows / DSX, or make sure they don't hide the controller.
 
@@ -51,6 +53,8 @@ REQUISITOS
 - GTA San Andreas 1.0 US con ASI Loader o Modloader.
 - GInput (lee el control para el juego). Sin GInput el juego no ve el control.
 - Un DualSense (o DualSense Edge) por cable USB. Bluetooth no está soportado.
+- Un DualShock 4 por USB también funciona: entrada, vibración y lightbar (sin gatillos adaptativos ni háptica HD).
+  En el DualShock 4, mantén PS en lugar de Mute para los combos.
 - Steam Input APAGADO para GTA San Andreas (Steam > Biblioteca > clic derecho > Propiedades > Controlador).
 - Cierra DS4Windows / DSX, o que no oculten el control.
 

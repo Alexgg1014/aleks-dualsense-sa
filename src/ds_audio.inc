@@ -91,7 +91,7 @@ DWORD WINAPI audioThread(void*){
     if(FAILED(CoInitializeEx(nullptr,COINIT_MULTITHREADED)))return 0;
     bool warned=false;
     while(!stopping){
-        if(!padConnected||!cfg.hdHaptics){Sleep(300);continue;}
+        if(!padConnected||!cfg.hdHaptics||isDs4()){Sleep(300);continue;}   // the DualShock 4 has no HD actuators
         char name[160]="";IMMDevice* d=findPadEndpoint(name,sizeof name);
         if(!d){if(!warned){warned=true;log("haptics: no active DualSense audio endpoint (is it disabled in Windows sound settings?); using classic rumble");}Sleep(2000);continue;}
         warned=false;runHapticStream(d,name);d->Release();

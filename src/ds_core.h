@@ -28,6 +28,20 @@ inline bool parse_usb_input(const uint8_t* r,size_t n,Input& o){
     return true;
 }
 
+// DualShock 4 over USB (Linux hid-playstation): input 0x01 (64 bytes) with sticks 1-4, buttons 5-7 (same bits as the
+// DualSense), L2/R2 8-9 and status 30 (battery 0-10, bit 4 = cable); output 0x05 (32 bytes), see build_ds4_output.
+inline bool parse_ds4_usb_input(const uint8_t* r,size_t n,Input& o){
+    if(n<32||r[0]!=0x01)return false;
+    o.lx=r[1];o.ly=r[2];o.rx=r[3];o.ry=r[4];
+    uint8_t b0=r[5],b1=r[6],b2=r[7];
+    o.hat=b0&0x0F;o.square=b0&0x10;o.cross=b0&0x20;o.circle=b0&0x40;o.triangle=b0&0x80;
+    o.l1=b1&0x01;o.r1=b1&0x02;o.l2d=b1&0x04;o.r2d=b1&0x08;o.create=b1&0x10;o.options=b1&0x20;o.l3=b1&0x40;o.r3=b1&0x80;
+    o.ps=b2&0x01;o.touch=b2&0x02;o.mute=false;o.counter=static_cast<uint8_t>(b2>>2);
+    o.l2=r[8];o.r2=r[9];
+    o.charging=(r[30]&0x10)!=0;o.battery=static_cast<uint8_t>(std::min(10,r[30]&0x0F)*10);
+    return true;
+}
+
 // XInput view of the pad (same bit values as XINPUT_GAMEPAD_*).
 struct XPad{uint16_t buttons=0;uint8_t lt=0,rt=0;int16_t lx=0,ly=0,rx=0,ry=0;};
 constexpr uint16_t X_UP=0x0001,X_DOWN=0x0002,X_LEFT=0x0004,X_RIGHT=0x0008,X_START=0x0010,X_BACK=0x0020,X_LTHUMB=0x0040,X_RTHUMB=0x0080,
@@ -314,6 +328,15 @@ inline void build_output(const OutState& s,bool vibrationV2,bool setupLights,boo
     out[43]=0;                                            // player LED brightness: high
     out[44]=s.leds&0x1F;
     out[45]=s.light.r;out[46]=s.light.g;out[47]=s.light.b;
+}
+// DualShock 4 output 0x05 (32 bytes): flags (0x01 motors, 0x02 lightbar), weak motor, strong motor, RGB.
+// No adaptive triggers, player LEDs, mic LED or HD haptics on this pad.
+constexpr size_t DS4_OUTPUT_SIZE=32;
+inline void build_ds4_output(const OutState& s,uint8_t out[DS4_OUTPUT_SIZE]){
+    std::memset(out,0,DS4_OUTPUT_SIZE);
+    out[0]=0x05;out[1]=0x01|0x02;
+    out[4]=s.rumR;out[5]=s.rumL;
+    out[6]=s.light.r;out[7]=s.light.g;out[8]=s.light.b;
 }
 inline const char* fx_name(const TriggerFx& f){
     switch(f.b[0]){case 0x05:case 0x00:return "off";case 0x21:return "feedback";case 0x22:return "bow";case 0x23:return "galloping";
