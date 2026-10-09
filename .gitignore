@@ -1,0 +1,7 @@
+*.asi
+*.exe
+*.o
+*.res
+*.log
+*.zip
+release/
