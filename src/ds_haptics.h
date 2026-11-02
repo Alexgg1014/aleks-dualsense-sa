@@ -1,11 +1,15 @@
 #pragma once
 // Alek's DualSense SA v2: HD haptics synthesizer (pure, no Windows, tested by test_ds.cpp).
 // The DualSense's USB audio endpoint is 4-channel; channels 3 and 4 drive the left and right voice-coil actuators.
-// Every effect is generated here as a waveform (no sound files): short "hits" (shots, steps, impacts) plus continuous
-// layers (engine, terrain, skid, weapon loops, the game's own rumble converted to low/high sines).
+// Every effect is generated here as a waveform: short "hits" (shots, steps, impacts) plus continuous layers (engine,
+// terrain, skid, weapon loops, the game's own rumble converted to low/high sines). 2.2: gunshots can also come from the
+// player's own weapon sound files (Astro Bot's approach: the haptic is derived from the sound), see make_clip.
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
+#include <cstring>
+#include <vector>
 
 namespace hx {
 constexpr float TAU=6.28318530718f;
@@ -114,6 +118,58 @@ struct Layers{
     float rumbleLow=0,rumbleHigh=0; // the game's XInput rumble, converted
 };
 
+// ---------- sound files -> haptic clips ----------
+// A clip is a mono haptic waveform at CLIP_RATE: the low band of a sound (what the voice coils can reproduce),
+// trimmed to its attack and body, with the reverb tail faded out.
+constexpr float CLIP_RATE=8000.f;
+struct Clip{std::vector<float> s;};
+// Minimal RIFF/WAVE reader: PCM 16/24/32-bit or float 32, any channel count, mixed to mono. false if not understood.
+inline bool decode_wav(const uint8_t* d,size_t n,std::vector<float>& mono,float& rate){
+    auto u16=[&](size_t o){return static_cast<unsigned>(d[o]|(d[o+1]<<8));};
+    auto u32=[&](size_t o){return static_cast<uint32_t>(d[o]|(d[o+1]<<8)|(d[o+2]<<16)|(static_cast<uint32_t>(d[o+3])<<24));};
+    if(n<12||std::memcmp(d,"RIFF",4)||std::memcmp(d+8,"WAVE",4))return false;
+    unsigned fmt=0,ch=0,bits=0;uint32_t sr=0;size_t data=0,len=0;
+    for(size_t o=12;o+8<=n;){
+        uint32_t sz=u32(o+4);size_t body=o+8;if(sz>n-body)sz=static_cast<uint32_t>(n-body);
+        if(!std::memcmp(d+o,"fmt ",4)&&sz>=16){fmt=u16(body);ch=u16(body+2);sr=u32(body+4);bits=u16(body+14);
+            if(fmt==0xFFFE&&sz>=26)fmt=u16(body+24);}   // WAVE_FORMAT_EXTENSIBLE: the sub-format's first word
+        else if(!std::memcmp(d+o,"data",4)){data=body;len=sz;}
+        o=body+sz+(sz&1);
+    }
+    bool pcm=fmt==1&&(bits==16||bits==24||bits==32),flt=fmt==3&&bits==32;
+    if(!data||!ch||ch>8||!sr||(!pcm&&!flt))return false;
+    size_t frame=ch*bits/8,frames=len/frame;mono.assign(frames,0.f);rate=static_cast<float>(sr);
+    for(size_t i=0;i<frames;++i){float sum=0;
+        for(unsigned c=0;c<ch;++c){const uint8_t* p=d+data+i*frame+c*bits/8;float v;
+            if(flt){float f;std::memcpy(&f,p,4);v=f;}
+            else if(bits==16)v=static_cast<int16_t>(p[0]|(p[1]<<8))/32768.f;
+            else if(bits==24)v=static_cast<float>(static_cast<int32_t>((static_cast<uint32_t>(p[0])<<8)|(static_cast<uint32_t>(p[1])<<16)|(static_cast<uint32_t>(p[2])<<24))>>8)/8388608.f;
+            else v=static_cast<float>(static_cast<int32_t>(u32(static_cast<size_t>(p-d))))/2147483648.f;
+            sum+=v;}
+        mono[i]=sum/static_cast<float>(ch);}
+    return frames>0;
+}
+// Sound -> haptic: band 30-300 Hz (two-pole filters), start at the attack, keep maxSeconds with the last 40 % faded,
+// peak-normalised, then resampled to CLIP_RATE. Empty clip if the sound is silent.
+inline Clip make_clip(const std::vector<float>& in,float rate,float maxSeconds=0.25f){
+    Clip c;if(in.empty()||rate<1000)return c;
+    std::vector<float> x(in);
+    auto lowpass=[&](float fc){float k=1-std::exp(-TAU*fc/rate),a=0,b=0;for(float& v:x){a+=(v-a)*k;b+=(a-b)*k;v=b;}};
+    auto highpass=[&](float fc){float k=1-std::exp(-TAU*fc/rate),lp=0;for(float& v:x){lp+=(v-lp)*k;v-=lp;}};
+    lowpass(300);highpass(30);
+    float peak=0;for(float v:x)peak=std::max(peak,std::fabs(v));if(peak<1e-4f)return c;
+    size_t start=0;while(start<x.size()&&std::fabs(x[start])<peak*0.2f)++start;   // the body, not the quiet build-up before it
+    start=start>static_cast<size_t>(rate*0.002f)?start-static_cast<size_t>(rate*0.002f):0;
+    size_t len=std::min(x.size()-start,static_cast<size_t>(rate*maxSeconds));
+    size_t outLen=static_cast<size_t>(static_cast<float>(len)*CLIP_RATE/rate);if(outLen<8)return c;
+    c.s.resize(outLen);float step=rate/CLIP_RATE,top=0;
+    for(size_t i=0;i<outLen;++i){float pos=static_cast<float>(i)*step;size_t j=start+static_cast<size_t>(pos);float f=pos-std::floor(pos);
+        float v=x[j]+(j+1<start+len?(x[j+1]-x[j])*f:0.f);c.s[i]=v;top=std::max(top,std::fabs(v));}
+    size_t fade=outLen*6/10;
+    for(size_t i=0;i<outLen;++i){float g=1.f/top;if(i>fade)g*=std::exp(-4.f*static_cast<float>(i-fade)/static_cast<float>(outLen-fade));c.s[i]*=g;}
+    return c;
+}
+
 // ---------- synthesizer ----------
 class Synth{
 public:
@@ -127,9 +183,16 @@ public:
         Voice& v=v_[slot];v=Voice{};v.on=true;v.h=h;v.amp=std::clamp(h.gain*gain,0.f,1.5f);v.t=-std::max(0.f,delay);
         pan=std::clamp(pan,-1.f,1.f);v.l=pan<=0?1.f:1.f-pan;v.r=pan>=0?1.f:1.f+pan;v.seed=seed_+=0x9E3779B9u;
     }
+    // Plays a haptic clip (made by make_clip); the clip must outlive the voice (they are loaded once and kept).
+    void trigger(const Clip* c,float gain,float pan,float delay=0.f){
+        if(!c||c->s.empty()||gain<=0)return;
+        int slot=0;for(int i=0;i<CLIPS;++i)if(!c_[i].clip||c_[i].pos>c_[slot].pos){slot=i;if(!c_[i].clip)break;}   // free, else the oldest
+        ClipVoice& v=c_[slot];v.clip=c;v.pos=-std::max(0.f,delay)*CLIP_RATE;v.amp=std::clamp(gain,0.f,1.5f);
+        pan=std::clamp(pan,-1.f,1.f);v.l=pan<=0?1.f:1.f-pan;v.r=pan>=0?1.f:1.f+pan;
+    }
     void set(const Layers& target){target_=target;}
-    void silence(){for(Voice& v:v_)v.on=false;target_=Layers{};cur_=Layers{};}
-    int active()const{int n=0;for(const Voice& v:v_)n+=v.on;return n;}
+    void silence(){for(Voice& v:v_)v.on=false;for(ClipVoice& v:c_)v.clip=nullptr;target_=Layers{};cur_=Layers{};}
+    int active()const{int n=0;for(const Voice& v:v_)n+=v.on;for(const ClipVoice& v:c_)n+=v.clip!=nullptr;return n;}
     // Renders n frames into left/right actuator buffers (overwrites them).
     void render(float* L,float* R,int n){
         const float dt=1.f/rate_,smooth=1.f-std::exp(-dt/0.03f);
@@ -151,6 +214,11 @@ public:
             if(cur_.rumbleHigh>1e-4f){phHigh_=wrap(phHigh_+TAU*150*dt);c+=cur_.rumbleHigh*0.6f*std::sin(phHigh_);}
             float l=c,r=c;
             for(Voice& v:v_){if(!v.on)continue;float s=v.sample(dt);l+=s*v.l;r+=s*v.r;}
+            for(ClipVoice& v:c_){if(!v.clip)continue;
+                if(v.pos>=0){size_t j=static_cast<size_t>(v.pos);const std::vector<float>& s=v.clip->s;
+                    if(j+1>=s.size()){v.clip=nullptr;continue;}
+                    float f=v.pos-static_cast<float>(j),x=(s[j]+(s[j+1]-s[j])*f)*v.amp;l+=x*v.l;r+=x*v.r;}
+                v.pos+=CLIP_RATE*dt;}
             L[i]=clip(l);R[i]=clip(r);
         }
     }
@@ -169,12 +237,14 @@ private:
             return s;
         }
     };
+    struct ClipVoice{const Clip* clip=nullptr;float pos=0,amp=1,l=1,r=1;};
     static constexpr int VOICES=48;   // grain clouds need room
+    static constexpr int CLIPS=8;     // automatics overlap a few shots
     static float noise(uint32_t& s){s^=s<<13;s^=s>>17;s^=s<<5;return static_cast<float>(static_cast<int32_t>(s))*(1.f/2147483648.f);}
     static float wrap(float p){return p>TAU*64?p-TAU*64:p;}
     static void lerpTo(float& c,float t,float k){c+=(t-c)*k;}
     static float clip(float x){x=std::clamp(x,-3.f,3.f);return std::clamp(x*(27+x*x)/(27+9*x*x),-1.f,1.f);}   // soft limiter (tanh-like)
-    Voice v_[VOICES];Layers target_,cur_;float rate_;uint32_t seed_=0x12345678u;
+    Voice v_[VOICES];ClipVoice c_[CLIPS];Layers target_,cur_;float rate_;uint32_t seed_=0x12345678u;
     float phEngine_=0,phLoop_=0,phLow_=0,phHigh_=0,terrain_=0,skidLo_=0,skidLo2_=0,loop_=0;
 };
 

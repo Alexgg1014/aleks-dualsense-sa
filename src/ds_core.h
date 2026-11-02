@@ -42,6 +42,50 @@ inline bool parse_ds4_usb_input(const uint8_t* r,size_t n,Input& o){
     return true;
 }
 
+// ---------- Bluetooth ----------
+// Both pads start in a short "simple" report 0x01 (sticks 1-4, buttons 5-7, L2/R2 8-9, the DualShock 4 USB layout) and
+// switch to their full report once the calibration feature report 0x05 is read: DualSense 0x31 (78 bytes, the USB
+// report shifted by 1), DualShock 4 0x11 (78 bytes, shifted by 2). Output reports carry a CRC-32 seeded with 0xA2.
+inline bool parse_bt_input(const uint8_t* r,size_t n,Input& o){
+    if(n<78||r[0]!=0x31)return false;
+    uint8_t usb[64];usb[0]=0x01;std::memcpy(usb+1,r+2,63);return parse_usb_input(usb,64,o);
+}
+inline bool parse_ds4_bt_input(const uint8_t* r,size_t n,Input& o){
+    if(n<78||r[0]!=0x11)return false;
+    uint8_t usb[64];usb[0]=0x01;std::memcpy(usb+1,r+3,63);return parse_ds4_usb_input(usb,64,o);
+}
+// Simple report: no battery, no Mute; good enough until the full reports start.
+inline bool parse_bt_simple_input(const uint8_t* r,size_t n,Input& o){
+    if(n<10||r[0]!=0x01)return false;
+    uint8_t usb[64]{};std::memcpy(usb,r,10);uint8_t battery=o.battery;bool charging=o.charging;
+    parse_ds4_usb_input(usb,64,o);o.battery=battery;o.charging=charging;return true;
+}
+// CRC-32 (zlib polynomial) over the 0xA2 seed byte and the report, as Linux hid-playstation computes it.
+inline uint32_t bt_crc(const uint8_t* data,size_t n){
+    uint32_t c=0xFFFFFFFFu;
+    auto step=[&](uint8_t b){c^=b;for(int k=0;k<8;++k)c=(c>>1)^(0xEDB88320u&(0u-(c&1u)));};
+    step(0xA2);for(size_t i=0;i<n;++i)step(data[i]);
+    return ~c;
+}
+inline uint32_t crc32_plain(const uint8_t* data,size_t n){   // for the test vector only
+    uint32_t c=0xFFFFFFFFu;for(size_t i=0;i<n;++i){c^=data[i];for(int k=0;k<8;++k)c=(c>>1)^(0xEDB88320u&(0u-(c&1u)));}return ~c;
+}
+constexpr size_t BT_OUTPUT_SIZE=78;
+inline void put_crc(uint8_t out[BT_OUTPUT_SIZE]){
+    uint32_t c=bt_crc(out,BT_OUTPUT_SIZE-4);
+    out[74]=c&0xFF;out[75]=(c>>8)&0xFF;out[76]=(c>>16)&0xFF;out[77]=(c>>24)&0xFF;
+}
+// DualSense 0x31: sequence in the high nibble of byte 1, tag 0x10, then the 47 bytes that follow the USB report id.
+inline void wrap_bt_output(const uint8_t* usb,uint8_t seq,uint8_t out[BT_OUTPUT_SIZE]){
+    std::memset(out,0,BT_OUTPUT_SIZE);out[0]=0x31;out[1]=static_cast<uint8_t>((seq&0x0F)<<4);out[2]=0x10;
+    std::memcpy(out+3,usb+1,47);put_crc(out);
+}
+// DualShock 4 0x11: HID + CRC flags (0xC0), then the 31 bytes that follow the USB report id at byte 3.
+inline void wrap_ds4_bt_output(const uint8_t* usb,uint8_t out[BT_OUTPUT_SIZE]){
+    std::memset(out,0,BT_OUTPUT_SIZE);out[0]=0x11;out[1]=0xC0;
+    std::memcpy(out+3,usb+1,31);put_crc(out);
+}
+
 // XInput view of the pad (same bit values as XINPUT_GAMEPAD_*).
 struct XPad{uint16_t buttons=0;uint8_t lt=0,rt=0;int16_t lx=0,ly=0,rx=0,ry=0;};
 constexpr uint16_t X_UP=0x0001,X_DOWN=0x0002,X_LEFT=0x0004,X_RIGHT=0x0008,X_START=0x0010,X_BACK=0x0020,X_LTHUMB=0x0040,X_RTHUMB=0x0080,

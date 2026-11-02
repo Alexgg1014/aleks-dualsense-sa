@@ -41,6 +41,50 @@ int main(){
         d[0]=0x11;CHECK(!parse_ds4_usb_input(d,64,in4));   // Bluetooth report: not supported
         OutState s4;s4.rumL=200;s4.rumR=90;s4.light={10,20,30};uint8_t o4[DS4_OUTPUT_SIZE];build_ds4_output(s4,o4);
         CHECK(o4[0]==0x05&&o4[1]==0x03&&o4[4]==90&&o4[5]==200&&o4[6]==10&&o4[7]==20&&o4[8]==30&&o4[31]==0);}
+    // --- Bluetooth ---
+    {const uint8_t nine[]={'1','2','3','4','5','6','7','8','9'};CHECK(crc32_plain(nine,9)==0xCBF43926u);   // standard CRC-32 check value
+        uint8_t seeded[10]={0xA2,'1','2','3','4','5','6','7','8','9'};CHECK(bt_crc(nine,9)==crc32_plain(seeded,10));
+        // DualSense 0x31 = the USB report shifted by one byte.
+        uint8_t usb[64]{};usb[0]=0x01;usb[1]=0;usb[2]=255;usb[5]=10;usb[6]=200;usb[8]=0x20|0x02;usb[10]=0x04;usb[53]=0x07;
+        uint8_t bt[78]{};bt[0]=0x31;bt[1]=0x5A;std::memcpy(bt+2,usb+1,63);
+        Input a,b;CHECK(parse_usb_input(usb,64,a)&&parse_bt_input(bt,78,b));
+        CHECK(b.cross&&b.hat==2&&b.mute&&b.l2==10&&b.r2==200&&b.battery==70&&b.ly==255&&!b.charging);
+        CHECK(!parse_bt_input(bt,77,b)&&!parse_bt_input(usb,64,b));
+        // DualShock 4 0x11 = the USB report shifted by two bytes.
+        uint8_t d4[64]{};d4[0]=0x01;d4[5]=0x20|0x06;d4[8]=40;d4[9]=250;d4[30]=0x05;
+        uint8_t b4[78]{};b4[0]=0x11;b4[1]=0xC0;std::memcpy(b4+3,d4+1,63);
+        Input c;CHECK(parse_ds4_bt_input(b4,78,c)&&c.cross&&c.hat==6&&c.l2==40&&c.r2==250&&c.battery==50);
+        // Simple report: buttons and sticks, battery kept from before.
+        uint8_t s[10]={0x01,0,255,128,128,0x10|0x08,0x02,0x01,30,60};Input e;e.battery=40;
+        CHECK(parse_bt_simple_input(s,10,e)&&e.square&&e.hat==8&&e.r1&&e.ps&&e.l2==30&&e.r2==60&&e.battery==40&&e.lx==0);
+        // Output wrapping: id, sequence, tag, payload, CRC over the first 74 bytes.
+        OutState o;o.rumL=200;o.rumR=90;o.r2=fx_weapon(2,7,8);o.light={1,2,3};uint8_t u[USB_OUTPUT_SIZE];build_output(o,false,false,false,u);
+        uint8_t w[BT_OUTPUT_SIZE];wrap_bt_output(u,3,w);
+        CHECK(w[0]==0x31&&w[1]==0x30&&w[2]==0x10&&w[3]==u[1]&&w[5]==u[3]&&w[13]==0x25&&w[47]==1&&w[48]==2&&w[49]==3&&w[73]==0);
+        uint32_t crc=bt_crc(w,74);CHECK(w[74]==(crc&0xFF)&&w[77]==(crc>>24));
+        uint8_t u4[DS4_OUTPUT_SIZE];build_ds4_output(o,u4);uint8_t w4[BT_OUTPUT_SIZE];wrap_ds4_bt_output(u4,w4);
+        CHECK(w4[0]==0x11&&w4[1]==0xC0&&w4[3]==0x03&&w4[6]==90&&w4[7]==200&&w4[8]==1&&w4[9]==2&&w4[10]==3);
+        uint32_t crc4=bt_crc(w4,74);CHECK(w4[74]==(crc4&0xFF)&&w4[75]==((crc4>>8)&0xFF));}
+    // --- sound files -> haptic clips (2.2) ---
+    {const int SR=44100,N=SR;std::vector<uint8_t> w(44+N*4);   // 1 s stereo 16-bit: a 90 Hz shot with a decaying body, silence first
+        auto put32=[&](size_t o,uint32_t v){for(int k=0;k<4;++k)w[o+k]=static_cast<uint8_t>(v>>(8*k));};
+        auto put16=[&](size_t o,unsigned v){w[o]=static_cast<uint8_t>(v);w[o+1]=static_cast<uint8_t>(v>>8);};
+        std::memcpy(&w[0],"RIFF",4);put32(4,static_cast<uint32_t>(w.size()-8));std::memcpy(&w[8],"WAVEfmt ",8);put32(16,16);put16(20,1);put16(22,2);
+        put32(24,SR);put32(28,SR*4);put16(32,4);put16(34,16);std::memcpy(&w[36],"data",4);put32(40,N*4);
+        for(int i=0;i<N;++i){float t=(i-SR/10)/static_cast<float>(SR);float v=t<0?0.f:std::sin(hx::TAU*90*t)*std::exp(-t/0.08f)*0.8f;
+            int16_t s=static_cast<int16_t>(v*32767);put16(44+i*4,static_cast<uint16_t>(s));put16(46+i*4,static_cast<uint16_t>(s));}
+        std::vector<float> mono;float rate=0;CHECK(hx::decode_wav(w.data(),w.size(),mono,rate)&&rate==SR&&mono.size()==static_cast<size_t>(N));
+        CHECK(std::fabs(mono[SR/10+SR/360]-0.8f*std::sin(hx::TAU*90/360.f)*std::exp(-1/360.f/0.08f))<0.01f);   // stereo mixed to mono
+        CHECK(!hx::decode_wav(w.data(),20,mono,rate));w[8]='X';CHECK(!hx::decode_wav(w.data(),w.size(),mono,rate));w[8]='W';
+        hx::Clip c=hx::make_clip(mono,rate,0.25f);
+        CHECK(c.s.size()==static_cast<size_t>(hx::CLIP_RATE*0.25f));   // trimmed to the attack: the 100 ms of silence is gone
+        float top=0;size_t at=0;for(size_t i=0;i<c.s.size();++i)if(std::fabs(c.s[i])>top){top=std::fabs(c.s[i]);at=i;}
+        CHECK(top>0.99f&&top<1.01f&&at<static_cast<size_t>(hx::CLIP_RATE*0.02f));   // peak-normalised, peak near the start
+        CHECK(std::fabs(c.s.back())<0.05f);   // tail faded out
+        CHECK(hx::make_clip(std::vector<float>(1000,0.f),44100).s.empty());
+        const int RATE=48000;static float L3[RATE/2],R3[RATE/2];hx::Synth sy(RATE);sy.trigger(&c,1.f,-1.f);CHECK(sy.active()==1);sy.render(L3,R3,RATE/2);
+        float pk=0;for(int i=0;i<RATE/10;++i)pk=std::max(pk,std::fabs(L3[i]));
+        CHECK(pk>0.3f&&std::fabs(R3[RATE/50])<1e-6f&&sy.active()==0);}   // left hand only, finished after its 250 ms
     // --- trigger effect encodings (Sony official modes) ---
     CHECK(bytes(fx_off(),{0x05}));
     CHECK(bytes(fx_feedback(0,8),{0x21,0xFF,0x03,0xFF,0xFF,0xFF,0x3F}));          // all zones, force 7 in each 3-bit slot

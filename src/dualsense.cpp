@@ -68,7 +68,8 @@ struct Settings{
     bool enabled=true,allowBackground=false,touchpadAsBack=true,muteToggles=true,logEvents=true;int deadzone=0;int controller=0;   // 0 auto (DualSense first), 1 DualSense only, 2 DualShock 4 only
     bool triggers=true,weaponTriggers=true,fireAtClick=true,drivingTriggers=true,speedResponse=true;std::atomic<int> weaponStrength{70},drivingStrength{25};   // atomic: changed in game with Mute + D-pad
     std::atomic<int> vibration{65};int drivingVibration=60;bool gameRumble=true,shots=true,damage=true,explosions=true,crashes=true,terrain=true;
-    bool hdHaptics=true,footsteps=true;   // v2: HD haptics through the pad's audio channels 3-4 (falls back to rumble if unavailable)
+    bool xboxRumble=true;   // 2.1: with no Sony pad, the effects go as rumble to a real XInput pad (Xbox, DualShock 3 via DsHidMini)
+    bool hdHaptics=true,footsteps=true,soundShots=true;   // soundShots (2.2): gunshots felt from the EarShot weapon sounds when found   // v2: HD haptics through the pad's audio channels 3-4 (falls back to rumble if unavailable)
     bool lightbar=true,healthColor=true,armourLeds=true,speedometer=true,policeFlashes=true;int brightness=100,speedKmh=160;ds::Rgb menu{0,80,200};
 } cfg;
 
@@ -76,6 +77,7 @@ HMODULE self=nullptr;wchar_t folder[MAX_PATH]{},iniPath[MAX_PATH]{},logPath[MAX_
 CRITICAL_SECTION logLock,stateLock;unsigned long long startTick=0;DWORD mainThread=0;bool gameOk=false,dryRun=false;   // dryRun: not inside GTA SA (offline harness), the pad is read but never written
 std::atomic<bool> padConnected{false},stopping{false},userTriggersOff{false},playerDriving{false};
 std::atomic<int> padModel{0};   // 0 DualSense, 1 DualSense Edge, 2 DualShock 4 (input, rumble and lightbar only)
+std::atomic<bool> padBluetooth{false};   // over Bluetooth Windows exposes no haptics audio channel: classic rumble only
 bool isDs4(){return padModel==2;}
 const char* padName(){return padModel==2?"DualShock 4":padModel==1?"DualSense Edge":"DualSense";}
 
@@ -121,7 +123,8 @@ void readSettings(){   // every key falls back to the value already loaded
     c.gameRumble=iniBool(L"Vibration",L"GameRumble",c.gameRumble);
     c.shots=iniBool(L"Vibration",L"Shots",c.shots);c.damage=iniBool(L"Vibration",L"Damage",c.damage);c.explosions=iniBool(L"Vibration",L"Explosions",c.explosions);
     c.crashes=iniBool(L"Vibration",L"Crashes",c.crashes);c.terrain=iniBool(L"Vibration",L"Terrain",c.terrain);
-    c.hdHaptics=iniBool(L"Haptics",L"HD",c.hdHaptics);c.footsteps=iniBool(L"Haptics",L"Footsteps",c.footsteps);
+    c.xboxRumble=iniBool(L"Vibration",L"XboxRumble",c.xboxRumble);
+    c.hdHaptics=iniBool(L"Haptics",L"HD",c.hdHaptics);c.footsteps=iniBool(L"Haptics",L"Footsteps",c.footsteps);c.soundShots=iniBool(L"Haptics",L"SoundShots",c.soundShots);
     c.lightbar=iniBool(L"Lighting",L"Lightbar",c.lightbar);c.brightness=std::clamp(iniInt(L"Lighting",L"Brightness",c.brightness),0,100);
     c.healthColor=iniBool(L"Lighting",L"HealthColor",c.healthColor);c.armourLeds=iniBool(L"Lighting",L"ArmourLeds",c.armourLeds);
     c.speedometer=iniBool(L"Lighting",L"Speedometer",c.speedometer);c.speedKmh=std::clamp(iniInt(L"Lighting",L"SpeedometerKmh",c.speedKmh),40,400);
@@ -134,12 +137,12 @@ void loadSettings(){
     Settings& c=cfg;   // code defaults first (also used by "Restablecer todo")
     c.enabled=c.touchpadAsBack=c.muteToggles=c.logEvents=true;c.allowBackground=false;c.deadzone=0;c.controller=0;
     c.triggers=c.weaponTriggers=c.fireAtClick=c.drivingTriggers=c.speedResponse=true;c.weaponStrength=70;c.drivingStrength=25;
-    c.vibration=65;c.drivingVibration=60;c.gameRumble=c.shots=c.damage=c.explosions=c.crashes=c.terrain=true;c.hdHaptics=c.footsteps=true;
+    c.vibration=65;c.drivingVibration=60;c.gameRumble=c.shots=c.damage=c.explosions=c.crashes=c.terrain=c.xboxRumble=true;c.hdHaptics=c.footsteps=c.soundShots=true;
     c.lightbar=c.healthColor=c.armourLeds=c.speedometer=c.policeFlashes=true;c.brightness=100;c.speedKmh=160;c.menu={0,80,200};menuOpenWith=0;menuKey=VK_F11;menuLanguage=0;
     readPath=iniPath;readSettings();
     bool user=*userIni&&GetFileAttributesW(userIni)!=INVALID_FILE_ATTRIBUTES;if(user){readPath=userIni;readSettings();}
-    logf("settings%s: triggers=%d weapons=%d%% fireAtClick=%d driving=%d%% speedResponse=%d vibration=%d%% (driving %d%%) gameRumble=%d lightbar=%d brightness=%d%% police=%d speedometer=%dkm/h touchpadBack=%d muteToggles=%d menu=%d key=%d",
-        user?" (with the player's file)":"",c.triggers,c.weaponStrength.load(),c.fireAtClick,c.drivingStrength.load(),c.speedResponse,c.vibration.load(),c.drivingVibration,c.gameRumble,c.lightbar,c.brightness,
+    logf("settings%s: triggers=%d weapons=%d%% fireAtClick=%d driving=%d%% speedResponse=%d vibration=%d%% (driving %d%%) gameRumble=%d xbox=%d lightbar=%d brightness=%d%% police=%d speedometer=%dkm/h touchpadBack=%d muteToggles=%d menu=%d key=%d",
+        user?" (with the player's file)":"",c.triggers,c.weaponStrength.load(),c.fireAtClick,c.drivingStrength.load(),c.speedResponse,c.vibration.load(),c.drivingVibration,c.gameRumble,c.xboxRumble,c.lightbar,c.brightness,
         c.policeFlashes,c.speedKmh,c.touchpadAsBack,c.muteToggles,menuOpenWith,menuKey);
 }
 
@@ -167,6 +170,7 @@ using CapsFn=DWORD (WINAPI*)(DWORD,DWORD,XINPUT_CAPABILITIES*);
 using BatteryFn=DWORD (WINAPI*)(DWORD,BYTE,XINPUT_BATTERY_INFORMATION*);
 
 void gameTick();
+std::atomic<bool> xboxActive{false};   // a real XInput pad in slot 0 gets the mod's rumble (no Sony pad connected)
 // First call from each call site is logged with its module, so the log shows who reads the pad.
 CRITICAL_SECTION callerLock;uintptr_t callerSeen[48]{};int callerCount=0;
 void noteCaller(int d,int f,void* ret){
@@ -202,6 +206,10 @@ DWORD onSetState(int d,DWORD user,XINPUT_VIBRATION* v,void* ret){
     if(user==0&&padConnected){
         if(!v)return ERROR_BAD_ARGUMENTS;
         static bool first=true;if(first&&(v->wLeftMotorSpeed||v->wRightMotorSpeed)){first=false;log("first game rumble request received");}
+        gameRumbleL=v->wLeftMotorSpeed>>8;gameRumbleR=v->wRightMotorSpeed>>8;return ERROR_SUCCESS;
+    }
+    if(user==0&&xboxActive){   // Xbox mode: the game's rumble is mixed with the mod's effects in xboxTick
+        if(!v)return ERROR_BAD_ARGUMENTS;
         gameRumbleL=v->wLeftMotorSpeed>>8;gameRumbleR=v->wRightMotorSpeed>>8;return ERROR_SUCCESS;
     }
     auto fn=reinterpret_cast<SetStateFn>(dlls[d].original[F_SET]);return fn?fn(user,v):ERROR_DEVICE_NOT_CONNECTED;
@@ -390,7 +398,9 @@ ds::OutState computeOut(unsigned long long now,int& fp){
     if(shots&&prof.kind!=ds::K_NONE){
         tr.lastShotAt=now;
         if(cfg.shots&&prof.rumMs)rumble.add(prof.rumL,prof.rumR,prof.rumMs,now);
-        if(cfg.shots)hap(hx::weapon_hit(type),1.f,0.35f);   // the gun sits in the right hand
+        float clipGain=1.f;const hx::Clip* clip=cfg.shots?shotClip(type,clipGain):nullptr;   // the gun's own sound, if its EarShot folder was found
+        if(clip){hapClip(clip,clipGain,0.35f);hap(hx::weapon_hit(type),0.4f,0.35f);}   // the sound gives the body, a light synth hit the crisp attack
+        else if(cfg.shots)hap(hx::weapon_hit(type),1.f,0.35f);   // the gun sits in the right hand
         if(cfg.shots&&prof.kind==ds::K_BOLT)hapRecipe(hx::bolt_open(),1.f,0.25f);   // bolt opens a quarter second after the shot
         if(cfg.shots&&(type==16||type==17||type==18||type==39))hap(hx::throw_swish(),1.f,0.35f);   // grenade, tear gas, molotov, satchel leave the hand
         event(EV_SHOT,"%s x%u (clip %u, total %u)",prof.name,shots,clip,total);
@@ -401,8 +411,8 @@ ds::OutState computeOut(unsigned long long now,int& fp){
         else if(state==1&&type==37){ly.loopHz=60;ly.loopAmp=0.30f;ly.loopNoise=0.85f;}
         else if(state==1&&(type==41||type==42)){ly.loopHz=90;ly.loopAmp=0.15f;ly.loopNoise=0.95f;}
         else if(type==9){ly.loopHz=state==1?95.f:55.f;ly.loopAmp=state==1?0.45f:0.12f;ly.loopNoise=state==1?0.35f:0.2f;}
-        if(sameGun&&state==2&&tr.state!=2)hap(hx::reload_click(false),1.f,0.35f);
-        else if(sameGun&&tr.state==2&&state==0)hap(hx::reload_click(true),1.f,0.35f);
+        if(sameGun&&state==2&&tr.state!=2){if(const hx::Clip* c=reloadClip(type,false))hapClip(c,0.6f,0.35f);else hap(hx::reload_click(false),1.f,0.35f);}
+        else if(sameGun&&tr.state==2&&state==0){if(const hx::Clip* c=reloadClip(type,true))hapClip(c,0.6f,0.35f);else hap(hx::reload_click(true),1.f,0.35f);}
     }
     if(state==4&&tr.state!=4&&cfg.shots){rumble.add(150,210,90,now);hap(hx::melee_hit(),1.f,0.3f);event(EV_MELEE,"%s hit",type<=15?"melee":prof.name);}
     bool cycling=sameGun&&prof.kind==ds::K_BOLT&&nextShot>gameTime&&nextShot-gameTime<5000;   // bolt still working
@@ -566,8 +576,37 @@ ds::OutState computeOut(unsigned long long now,int& fp){
     o.rumL=static_cast<uint8_t>(std::clamp(scaleV(l),0.f,255.f));o.rumR=static_cast<uint8_t>(std::clamp(scaleV(r),0.f,255.f));
     return o;
 }
+// ---------- Xbox mode: no Sony pad, a real XInput pad in slot 0 ----------
+// The same effects as classic rumble on the DualSense (shots, hits, explosions, crashes, terrain) plus the game's own
+// rumble go to that pad: Xbox controllers, generic XInput pads, or a DualShock 3 through DsHidMini in XInput mode.
+std::atomic<unsigned long long> xboxSentAt{0};std::atomic<unsigned> xboxSent{0};
+template<class Fn> Fn systemFn(int f){for(const HookedDll& h:dlls)if(h.original[f])return reinterpret_cast<Fn>(h.original[f]);return nullptr;}
+void xboxSend(uint8_t l,uint8_t r){
+    auto set=systemFn<SetStateFn>(F_SET);if(!set)return;
+    XINPUT_VIBRATION v{static_cast<WORD>(l*257),static_cast<WORD>(r*257)};set(0,&v);
+    xboxSent=(static_cast<unsigned>(l)<<8)|r;xboxSentAt=GetTickCount64();
+}
+void xboxStop(){if(xboxActive&&xboxSent)xboxSend(0,0);}
+void xboxTick(unsigned long long now){
+    static unsigned long long nextProbe=0;static bool present=false;
+    if(!cfg.xboxRumble||dryRun){if(xboxActive){xboxStop();xboxActive=false;}return;}
+    if(now>=nextProbe){
+        nextProbe=now+1000;auto get=systemFn<GetStateFn>(F_GET);XINPUT_STATE st{};bool p=get&&get(0,&st)==ERROR_SUCCESS;
+        if(p!=present){present=p;log(p?"Xbox mode: XInput pad in slot 0 and no Sony pad, the mod's rumble effects go to it":"Xbox mode: the XInput pad in slot 0 is gone");}
+    }
+    if(!present){xboxActive=false;return;}
+    xboxActive=true;
+    int fp=0;ds::OutState o=computeOut(now,fp);
+    if(!cfg.allowBackground&&!gameFocused())o.rumL=o.rumR=0;
+    unsigned v=(static_cast<unsigned>(o.rumL)<<8)|o.rumR;
+    if(v!=xboxSent||now-xboxSentAt>500)xboxSend(o.rumL,o.rumR);
+}
 void gameTick(){
-    if(!padConnected)return;
+    if(!padConnected){
+        unsigned long long now=GetTickCount64();if(now-lastSampleAt<5)return;lastSampleAt=now;
+        xboxTick(now);return;
+    }
+    if(xboxActive){xboxStop();xboxActive=false;}   // a Sony pad took slot 0: the Xbox pad goes quiet
     unsigned long long now=GetTickCount64();if(now-lastSampleAt<5)return;lastSampleAt=now;
     int fp=0;ds::OutState o=computeOut(now,fp);
     if(isDs4())fp=0;   // no trigger click on a DualShock 4, so the game reads the trigger as usual
@@ -578,10 +617,10 @@ void gameTick(){
 
 // ---------- HID device ----------
 struct Device{
-    HANDLE h=INVALID_HANDLE_VALUE;USHORT inLen=0,outLen=0;bool vibrationV2=false,setupLights=true;
-    OVERLAPPED rov{},wov{};BYTE in[128]{};bool readPending=false;unsigned writeErrors=0;
+    HANDLE h=INVALID_HANDLE_VALUE;USHORT inLen=0,outLen=0;bool vibrationV2=false,setupLights=true,bt=false;uint8_t seq=0;
+    OVERLAPPED rov{},wov{};BYTE in[1024]{};bool readPending=false;unsigned writeErrors=0;
 } dev;
-unsigned long long reportsIn=0,reportsOut=0,writeFailures=0;bool loggedBluetooth=false;unsigned openFailures=0;
+unsigned long long reportsIn=0,reportsOut=0,writeFailures=0;unsigned openFailures=0;bool loggedSimple=false;
 
 void closeDevice(const char* why){
     if(dev.h==INVALID_HANDLE_VALUE)return;
@@ -589,7 +628,7 @@ void closeDevice(const char* why){
     CloseHandle(dev.h);dev.h=INVALID_HANDLE_VALUE;dev.readPending=false;
     padConnected=false;gameRumbleL=gameRumbleR=0;
     EnterCriticalSection(&stateLock);pad=ds::XPad{};firePoint=0;LeaveCriticalSection(&stateLock);
-    logf("%s disconnected (%s); XInput falls back to the system, waiting for the cable",padName(),why);
+    logf("%s disconnected (%s); XInput falls back to the system, waiting for the controller",padName(),why);
 }
 bool tryOpen(){
     GUID guid;HidD_GetHidGuid(&guid);
@@ -613,13 +652,21 @@ bool tryOpen(){
         if(h==INVALID_HANDLE_VALUE){if(openFailures++<5)logf("Sony controller found but CreateFile failed (error %lu): another program may own it exclusively (DS4Windows/DSX hide mode)",GetLastError());continue;}
         PHIDP_PREPARSED_DATA pre=nullptr;HIDP_CAPS caps{};
         if(HidD_GetPreparsedData(h,&pre)){HidP_GetCaps(pre,&caps);HidD_FreePreparsedData(pre);}
-        if(caps.InputReportByteLength!=64){
-            if(!loggedBluetooth){loggedBluetooth=true;logf("Sony controller found with %u-byte input reports (Bluetooth); it needs the USB cable, ignoring it.",caps.InputReportByteLength);}
+        // USB pads have 64-byte input reports; over Bluetooth Windows reports the largest of the pad's BT reports (78 or more).
+        bool bt=caps.InputReportByteLength!=64;
+        if(caps.InputReportByteLength<10||caps.InputReportByteLength>sizeof dev.in||caps.OutputReportByteLength>1024||(bt&&caps.OutputReportByteLength<ds::BT_OUTPUT_SIZE)){
+            if(openFailures++<5)logf("Sony controller with unexpected report sizes (input %u, output %u), ignoring it",caps.InputReportByteLength,caps.OutputReportByteLength);
             CloseHandle(h);continue;
         }
         bool ds4=at.ProductID==0x05C4||at.ProductID==0x09CC||at.ProductID==0x0BA0;padModel=ds4?2:at.ProductID==0x0DF2?1:0;
-        dev.h=h;dev.inLen=caps.InputReportByteLength;dev.outLen=std::clamp<USHORT>(caps.OutputReportByteLength,static_cast<USHORT>(ds4?ds::DS4_OUTPUT_SIZE:ds::USB_OUTPUT_SIZE),128);
-        dev.vibrationV2=false;dev.setupLights=!ds4;dev.writeErrors=0;
+        dev.h=h;dev.bt=bt;padBluetooth=bt;dev.seq=0;dev.inLen=caps.InputReportByteLength;
+        dev.outLen=std::max<USHORT>(caps.OutputReportByteLength,static_cast<USHORT>(bt?ds::BT_OUTPUT_SIZE:ds4?ds::DS4_OUTPUT_SIZE:ds::USB_OUTPUT_SIZE));
+        dev.vibrationV2=false;dev.setupLights=!ds4;dev.writeErrors=0;loggedSimple=false;
+        if(bt){   // reading the calibration report switches the pad from its simple report to the full one (0x31 / 0x11)
+            BYTE cal[1024]{};cal[0]=0x05;ULONG calLen=std::min<ULONG>(caps.FeatureReportByteLength,sizeof cal);
+            bool ok=calLen>=41&&HidD_GetFeature(h,cal,calLen);
+            logf("Bluetooth: calibration report %s; HD haptics need the USB cable (classic rumble over Bluetooth)",ok?"read, full input reports on":"unavailable, staying on simple reports");
+        }
         if(!ds4){
             BYTE fw[256]{};fw[0]=0x20;unsigned update=0;ULONG fwLen=std::min<ULONG>(caps.FeatureReportByteLength,sizeof fw);
             if(fwLen>=64&&HidD_GetFeature(h,fw,fwLen)){update=fw[44]|(fw[45]<<8);dev.vibrationV2=update>=0x0215||at.ProductID==0x0DF2;   // Linux: DS_FEATURE_VERSION(2,21); the Edge always uses v2
@@ -628,7 +675,7 @@ bool tryOpen(){
             else log("firmware report unavailable; classic rumble");
         }
         char path[300];WideCharToMultiByte(CP_UTF8,0,detail->DevicePath,-1,path,sizeof path,nullptr,nullptr);
-        logf("%s connected over USB: VID %04X PID %04X, input %u bytes, output %u bytes (%s)",padName(),at.VendorID,at.ProductID,caps.InputReportByteLength,caps.OutputReportByteLength,path);
+        logf("%s connected over %s: VID %04X PID %04X, input %u bytes, output %u bytes (%s)",padName(),bt?"Bluetooth":"USB",at.VendorID,at.ProductID,caps.InputReportByteLength,caps.OutputReportByteLength,path);
         opened=true;
     }
     }
@@ -637,7 +684,11 @@ bool tryOpen(){
     return opened;
 }
 bool writeReport(const ds::OutState& s,bool release,OVERLAPPED& ov){
-    BYTE out[128]{};if(isDs4())ds::build_ds4_output(s,out);else ds::build_output(s,dev.vibrationV2,dev.setupLights,release,out);
+    BYTE usb[64]{},out[1024]{};
+    if(isDs4())ds::build_ds4_output(s,usb);else ds::build_output(s,dev.vibrationV2,dev.setupLights,release,usb);
+    if(!dev.bt)std::memcpy(out,usb,sizeof usb);
+    else if(isDs4())ds::wrap_ds4_bt_output(usb,out);
+    else ds::wrap_bt_output(usb,dev.seq++,out);   // Windows pads the write to the report size it reports; the pad reads its 78 bytes
     ResetEvent(ov.hEvent);DWORD done=0;
     BOOL ok=WriteFile(dev.h,out,dev.outLen,nullptr,&ov);
     if(!ok&&GetLastError()==ERROR_IO_PENDING){
@@ -649,6 +700,9 @@ bool writeReport(const ds::OutState& s,bool release,OVERLAPPED& ov){
 // Mute combos: tap = adaptive triggers on/off; hold Mute and press the D-pad: up/down = vibration +-10 %,
 // right = open/close the menu (default shortcut). The lightbar turns white and the player LEDs show the new vibration
 // level for 1.5 s; values are saved to the player's file in Documents.
+// Street Talk SA sets bit 0x4000 of DisablePlayerControls while its settings menu is open (it navigates with the
+// D-pad), so the D-pad combos that open this menu stay off until it clears the bit.
+bool otherModMenu(){return gameOk&&(mem<uint16_t>(PAD0_DISABLE_CONTROLS)&0x4000);}
 bool muteCombo=false;unsigned long long adjustAt=0,lastDownTap=0;int adjustLevel=0;bool adjustRumble=false;
 void saveSetting(const wchar_t* section,const wchar_t* key,int value){if(!*userIni)return;wchar_t v[16];swprintf_s(v,L"%d",value);WritePrivateProfileStringW(section,key,v,userIni);}
 void muteAdjust(const ds::Input& in){
@@ -657,7 +711,7 @@ void muteAdjust(const ds::Input& in){
         if(fresh&&(in.hat==0||in.hat==4)){
             muteCombo=true;int v=std::clamp(cfg.vibration+(in.hat==0?10:-10),0,100);cfg.vibration=v;saveSetting(L"Vibration",L"Vibration",v);
             adjustAt=GetTickCount64();adjustLevel=v;adjustRumble=true;logf("Mute + D-pad: vibration %d%%",v);hap(hx::Hit{150,60,0.25f,0.08f,0.3f,1.f});
-        }else if(fresh&&in.hat==2){muteCombo=true;if(menuOpenWith==0||menuOpen)menuToggleRequest=true;}
+        }else if(fresh&&in.hat==2){muteCombo=true;if(menuOpen||(menuOpenWith==0&&!otherModMenu()))menuToggleRequest=true;}
     }else if(lastInput.mute){
         if(!muteCombo&&cfg.muteToggles&&!isDs4()){bool off=!userTriggersOff;userTriggersOff=off;logf("Mute tapped: adaptive triggers %s",off?"OFF (mic LED on)":"ON");}
         muteCombo=false;
@@ -665,12 +719,16 @@ void muteAdjust(const ds::Input& in){
 }
 void handleInput(const BYTE* r,DWORD n){
     ds::Input in;
-    if(isDs4()){if(!ds::parse_ds4_usb_input(r,n,in))return;in.mute=in.ps;in.ps=false;}   // no Mute button: PS is the combo key
-    else if(!ds::parse_usb_input(r,n,in))return;
+    in.battery=lastInput.battery;in.charging=lastInput.charging;   // kept while the pad is still on its simple Bluetooth report
+    bool ok=dev.bt?(isDs4()?ds::parse_ds4_bt_input(r,n,in):ds::parse_bt_input(r,n,in)):(isDs4()?ds::parse_ds4_usb_input(r,n,in):ds::parse_usb_input(r,n,in));
+    if(!ok&&dev.bt&&ds::parse_bt_simple_input(r,n,in)){ok=true;if(!loggedSimple){loggedSimple=true;log("Bluetooth: simple input report (no battery or Mute until the full report starts)");}}
+    if(!ok)return;
+    if(isDs4()){in.mute=in.ps;in.ps=false;}   // no Mute button: PS is the combo key
     ++reportsIn;
     if(reportsIn==1)logf("first input report: battery %u%%%s",in.battery,in.charging?" (charging)":"");
     muteAdjust(in);
-    if(menuOpenWith==1&&!menuOpen&&!in.mute&&in.hat==4&&lastInput.hat!=4){   // double tap down opens the menu
+    if(otherModMenu())lastDownTap=0;   // Street Talk's menu owns the D-pad: re-arm the double tap
+    else if(menuOpenWith==1&&!menuOpen&&!in.mute&&in.hat==4&&lastInput.hat!=4){   // double tap down opens the menu
         unsigned long long now=GetTickCount64();if(lastDownTap&&now-lastDownTap<350){menuToggleRequest=true;lastDownTap=0;}else lastDownTap=now;}
     ds::Input game=in;if(in.mute)game.hat=8;   // the D-pad belongs to the combo while Mute is held
     ds::XPad p=ds::to_xinput(game,cfg.touchpadAsBack,cfg.deadzone);
@@ -729,6 +787,7 @@ DWORD WINAPI deviceThread(void*){
         if(gameOk&&!dryRun&&!presentHookTried){   // hook Present 3 s after the D3D9 device exists (the Photo Mode hooks it at the same time)
             if(!deviceSeenAt&&plausible(mem<uintptr_t>(0xC97C28)))deviceSeenAt=now;
             if(deviceSeenAt&&now-deviceSeenAt>3000)hookPresent();}
+        {unsigned long long at=xboxSentAt;if(xboxSent&&at<now&&now-at>600)xboxSend(0,0);}   // the game stopped sampling (alt-tab, exit, crash): never leave the Xbox pad buzzing
         if(dev.h==INVALID_HANDLE_VALUE){
             haveSent=false;
             if(now>=nextScan){nextScan=now+1000;tryOpen();}
@@ -745,7 +804,7 @@ DWORD WINAPI deviceThread(void*){
             ds::OutState n=neutralOut();n.light=at?want.light:n.light;n.leds=at?want.leds:n.leds;want=n;
         }else warnedWatchdog=false;
         want.micLed=userTriggersOff;
-        want.hd=hdActive&&!isDs4();
+        want.hd=hdActive&&!isDs4()&&!padBluetooth;   // Bluetooth has no haptics audio channel on Windows
         if(adjustAt&&now-adjustAt<1500){   // Mute + D-pad feedback: white lightbar, LEDs = new level, a short buzz for vibration
             want.light=ds::dim(ds::Rgb{255,255,255},cfg.brightness/100.f);want.leds=ds::gauge_leds(adjustLevel/100.f);
             if(adjustRumble&&now-adjustAt<250)want.rumL=want.rumR=static_cast<uint8_t>(adjustLevel*255/100);}
@@ -767,6 +826,7 @@ DWORD WINAPI deviceThread(void*){
 HANDLE thread=nullptr;
 void shutdownPad(){
     // Never leave the triggers stiff: triggers off, motors off, LEDs back to the firmware.
+    if(!dryRun)xboxStop();
     if(dev.h==INVALID_HANDLE_VALUE||dryRun)return;
     // The device thread may have died mid-write at process exit: cancel its I/O and use a fresh OVERLAPPED.
     CancelIoEx(dev.h,nullptr);ds::OutState o=neutralOut();o.micLed=false;
@@ -783,7 +843,7 @@ extern "C" BOOL WINAPI DllMain(HMODULE module,DWORD reason,LPVOID reserved){
         GetModuleFileNameW(self,folder,MAX_PATH);wchar_t* slash=wcsrchr(folder,L'\\');if(slash)*slash=0;
         swprintf_s(iniPath,L"%s\\Aleks.DualSense.SA.ini",folder);swprintf_s(logPath,L"%s\\Aleks.DualSense.SA.log",folder);
         wchar_t prev[MAX_PATH];swprintf_s(prev,L"%s\\Aleks.DualSense.SA.prev.log",folder);MoveFileExW(logPath,prev,MOVEFILE_REPLACE_EXISTING);
-        logf("Alek's DualSense SA 2.0 (build %s %s), game thread %lu",__DATE__,__TIME__,static_cast<unsigned long>(mainThread));
+        logf("Alek's DualSense SA 2.2 (build %s %s), game thread %lu",__DATE__,__TIME__,static_cast<unsigned long>(mainThread));
         loadSettings();buildMenuRows();
         if(!cfg.enabled){log("disabled in the INI ([General] Enabled=0); XInput untouched");return TRUE;}
         gameOk=readable(VERSION_PROBE,sizeof versionBytes)&&std::memcmp(reinterpret_cast<const void*>(VERSION_PROBE),versionBytes,sizeof versionBytes)==0;

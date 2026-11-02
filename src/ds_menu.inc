@@ -17,13 +17,14 @@ const char* const translations[][2]={
     {"Gatillos adaptativos","Adaptive triggers"},{"Armas","Weapons"},{"Fuerza en armas","Weapon strength"},{"Disparo en el clic","Fire at the click"},
     {"Manejo","Driving"},{"Fuerza al manejar","Driving strength"},{"Acelerador según velocidad","Throttle follows speed"},
     {"Vibración","Vibration"},{"Al manejar","While driving"},{"Vibración del juego","Game rumble"},{"Disparos","Shots"},{"Golpes recibidos","Hits taken"},
-    {"Explosiones","Explosions"},{"Choques","Crashes"},{"Terreno","Terrain"},{"Háptica HD","HD haptics"},{"Pasos (háptica)","Footsteps (haptics)"},
+    {"Explosiones","Explosions"},{"Choques","Crashes"},{"Terreno","Terrain"},{"Háptica HD","HD haptics"},{"Disparos con el sonido del arma","Shots from the weapon's sound"},{"Pasos (háptica)","Footsteps (haptics)"},
     {"Brillo","Brightness"},{"Color según la vida","Colour by health"},{"LEDs = armadura","LEDs = armour"},{"Velocímetro en vehículo","Speedometer in vehicles"},
     {"Velocímetro lleno a","Speedometer full at"},{"Luces de policía","Police lights"},
     {"Sentir gatillo","Feel a trigger"},{"Probar háptica","Try haptics"},{"Pulso de vibración","Rumble pulse"},{"Restablecer todo","Reset everything"},
     {"Abrir menú con","Open menu with"},{"Mute apaga gatillos","Mute toggles triggers"},{"Eventos en el log","Log events"},{"Idioma","Language"},
     {"Sí","Yes"},{"Pulsa X","Press X"},{"Pulsa X otra vez","Press X again"},{"conectado por USB","connected over USB"},{"sin control","no controller"},
-    {"DualShock 4 por USB","DualShock 4 over USB"},{"El DualShock 4 no tiene gatillos adaptativos ni háptica HD.","The DualShock 4 has no adaptive triggers or HD haptics."},
+    {"DualShock 4 por USB","DualShock 4 over USB"},{"por Bluetooth","over Bluetooth"},{"batería","battery"},
+    {"Bluetooth: vibración clásica. La háptica HD necesita el cable.","Bluetooth: classic rumble. HD haptics need the USB cable."},{"El DualShock 4 no tiene gatillos adaptativos ni háptica HD.","The DualShock 4 has no adaptive triggers or HD haptics."},
     {"Gatillos: se sienten al momento. Háptica: elige y pulsa X.","Triggers: felt right away. Haptics: pick one and press X."},
     {"Mute + arriba/abajo también cambia la vibración sin abrir el menú.","Mute + up/down also changes vibration without the menu."},
     {"Se guarda en Documentos\\GTA San Andreas User Files.","Saved in Documents\\GTA San Andreas User Files."},
@@ -53,7 +54,7 @@ const char* hapticChoices[]={"Pistola","Escopeta","AK-47","Francotirador","Cerro
 constexpr int HAPTIC_COUNT=static_cast<int>(sizeof hapticChoices/sizeof hapticChoices[0]);int hapticChoice=0;
 void playHapticTest(int i){
     static const unsigned guns[]={22,25,30,34};static const hx::Surface steps[]={hx::S_CONCRETE,hx::S_GRASS,hx::S_SAND,hx::S_GRAVEL,hx::S_WOOD,hx::S_METAL,hx::S_WATER};
-    if(i<4)hap(hx::weapon_hit(guns[i]),1.f,0.35f);else if(i==4){hapRecipe(hx::bolt_open());hapRecipe(hx::bolt_close(),1.f,0.45f);}
+    if(i<4){float g=1.f;if(const hx::Clip* c=shotClip(guns[i],g)){hapClip(c,g,0.35f);hap(hx::weapon_hit(guns[i]),0.4f,0.35f);}else hap(hx::weapon_hit(guns[i]),1.f,0.35f);}   // the weapon sound when foundelse if(i==4){hapRecipe(hx::bolt_open());hapRecipe(hx::bolt_close(),1.f,0.45f);}
     else if(i==5)hap(hx::weapon_hit(35),1.f,0.35f);else if(i==6)hapRecipe(hx::glass_break(1.f,0.f,hapRng));else if(i==7)hap(hx::damage_hit(0.8f));
     else if(i==8)hap(hx::explosion_hit(0.9f),1.f,-0.8f);else if(i==9)hap(hx::explosion_hit(0.9f),1.f,0.8f);
     else if(i<17){for(int s=0;s<4;++s)hapRecipe(hx::footstep(steps[i-10],0.8f,(s%2)?0.45f:-0.45f,hapRng),1.f,s*0.38f);}   // four steps
@@ -82,6 +83,7 @@ void buildMenuRows(){
         toggle(TAB_VIBRATION,"Choques",&c.crashes,L"Vibration",L"Crashes"),
         toggle(TAB_VIBRATION,"Terreno",&c.terrain,L"Vibration",L"Terrain"),
         toggle(TAB_VIBRATION,"Háptica HD",&c.hdHaptics,L"Haptics",L"HD"),
+        toggle(TAB_VIBRATION,"Disparos con el sonido del arma",&c.soundShots,L"Haptics",L"SoundShots"),
         toggle(TAB_VIBRATION,"Pasos (háptica)",&c.footsteps,L"Haptics",L"Footsteps"),
         toggle(TAB_LIGHTS,"Lightbar",&c.lightbar,L"Lighting",L"Lightbar"),
         pct(TAB_LIGHTS,"Brillo",nullptr,&c.brightness,0,100,10,L"Lighting",L"Brightness"),
@@ -280,7 +282,11 @@ void drawMenu(IDirect3DDevice9* dev,float w,float h){
     float bodyH=rowH*static_cast<float>(std::max(count,7))+44*k,ph=headerH+tabH+bodyH+footH;
     rect(dev,x0,y0,pw,ph,0xC8000000);
     text(dev,x0+pad,y0+8*k,"DualSense",ACCENT,52*k,LEFT,titleFont);
-    text(dev,x0+pw-pad,y0+30*k,!padConnected?"sin control":isDs4()?"DualShock 4 por USB":"conectado por USB",padConnected?SA_DIM:0xFFF07C7C,17*k,RIGHT);
+    if(padConnected&&padBluetooth){   // e.g. "DualSense por Bluetooth · batería 80 %"
+        char status[96];ds::Input in;EnterCriticalSection(&stateLock);in=lastInput;LeaveCriticalSection(&stateLock);
+        std::snprintf(status,sizeof status,"%s %s · %s %u %%",padName(),loc("por Bluetooth"),loc("batería"),in.battery);
+        text(dev,x0+pw-pad,y0+30*k,status,SA_DIM,17*k,RIGHT);
+    }else text(dev,x0+pw-pad,y0+30*k,!padConnected?"sin control":isDs4()?"DualShock 4 por USB":"conectado por USB",padConnected?SA_DIM:0xFFF07C7C,17*k,RIGHT);
     rect(dev,x0+pad,y0+headerH-2*k,pw-pad*2,2*k,withAlpha(ACCENT,0x70));
     float ty=y0+headerH,cw=(pw-pad*2)/TAB_COUNT,target=x0+pad+cw*menuTab;if(tabX<0)tabX=target;tabX=approach(tabX,target,22);
     for(int t=0;t<TAB_COUNT;++t)text(dev,x0+pad+cw*t+cw/2,ty+12*k,tabNames[t],t==menuTab?SA_TEXT:SA_DIM,18*k,CENTER);
@@ -299,6 +305,7 @@ void drawMenu(IDirect3DDevice9* dev,float w,float h){
     }
     // Footer note per tab
     const char* note=isDs4()&&(menuTab==TAB_TRIGGERS||menuTab==TAB_VIBRATION)?"El DualShock 4 no tiene gatillos adaptativos ni háptica HD.":
+        padBluetooth&&(menuTab==TAB_VIBRATION||menuTab==TAB_TEST)?"Bluetooth: vibración clásica. La háptica HD necesita el cable.":
         menuTab==TAB_TEST?"Gatillos: se sienten al momento. Háptica: elige y pulsa X.":
         menuTab==TAB_VIBRATION?"Mute + arriba/abajo también cambia la vibración sin abrir el menú.":
         menuTab==TAB_OPTIONS?"Se guarda en Documentos\\GTA San Andreas User Files.":"Los cambios se sienten al momento.";
