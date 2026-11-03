@@ -222,6 +222,12 @@ inline const WeaponProfile& weapon_profile(unsigned type){
     };
     return type<sizeof table/sizeof table[0]?table[type]:none;
 }
+// Add-on guns (Weapon Limit Adjuster) have IDs past the original 47: they borrow the profile of the gun class of their
+// slot (2 handguns, 3 shotguns, 4 SMGs, 5 assault rifles, 6 rifles). Original IDs are returned unchanged.
+inline unsigned profile_type(unsigned type,int slot){
+    if(type<47)return type;
+    switch(slot){case 2:return 22;case 3:return 25;case 4:return 29;case 5:return 30;case 6:return 33;default:return type;}
+}
 struct WeaponState{unsigned type=0;bool hasAmmo=true,reloading=false,firing=false,cycling=false;   // cycling: bolt still working (game time < next shot)
    unsigned long long sinceShotMs=100000;};
 struct TriggerPair{TriggerFx l2,r2;int firePoint=0;const char* name="off";};

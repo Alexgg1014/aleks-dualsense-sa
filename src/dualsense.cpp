@@ -82,6 +82,7 @@ bool isDs4(){return padModel==2;}
 const char* padName(){return padModel==2?"DualShock 4":padModel==1?"DualSense Edge":"DualSense";}
 
 void log(const char* message){
+    if(!cfg.logEvents)return;   // [General] LogEvents=0: no log file at all
     EnterCriticalSection(&logLock);
     FILE* f=nullptr;_wfopen_s(&f,logPath,L"a");
     if(f){fprintf(f,"[%9.3f] %s\n",static_cast<double>(GetTickCount64()-startTick)/1000.0,message);fclose(f);}
@@ -106,8 +107,9 @@ const char* where(uintptr_t address,char* out,size_t size){
 }
 bool gameFocused(){DWORD pid=0;HWND w=GetForegroundWindow();if(w)GetWindowThreadProcessId(w,&pid);return pid==GetCurrentProcessId();}
 
-// Settings: code defaults -> the mod INI (MO2) -> the player's file in Documents (menu and Mute + D-pad changes).
-wchar_t userIni[MAX_PATH]{};int menuOpenWith=0,menuKey=VK_F11,menuLanguage=0;const wchar_t* readPath=nullptr;   // menuLanguage: 0 auto (game language), 1 Spanish, 2 English
+// Settings: code defaults -> the mod INI, the single settings file; the menu and Mute + D-pad write back to it.
+// Only when the game folder is read-only do changes go to Documents (settingsIni), read after the mod INI.
+wchar_t settingsIni[MAX_PATH]{};int menuOpenWith=0,menuKey=VK_F11,menuLanguage=0;const wchar_t* readPath=nullptr;   // menuLanguage: 0 auto (game language), 1 Spanish, 2 English
 int iniInt(const wchar_t* section,const wchar_t* key,int def){return static_cast<int>(GetPrivateProfileIntW(section,key,def,readPath));}
 bool iniBool(const wchar_t* section,const wchar_t* key,bool def){return iniInt(section,key,def?1:0)!=0;}
 void readSettings(){   // every key falls back to the value already loaded
@@ -133,16 +135,19 @@ void readSettings(){   // every key falls back to the value already loaded
         static_cast<uint8_t>(std::clamp(iniInt(L"Lighting",L"MenuBlue",c.menu.b),0,255))};
     menuOpenWith=std::clamp(iniInt(L"Menu",L"OpenWith",menuOpenWith),0,2);menuLanguage=std::clamp(iniInt(L"Menu",L"Language",menuLanguage),0,2);menuKey=std::clamp(iniInt(L"Menu",L"Key",menuKey),0,255);
 }
-void loadSettings(){
-    Settings& c=cfg;   // code defaults first (also used by "Restablecer todo")
+void setDefaults(){   // also used by "Restablecer todo"
+    Settings& c=cfg;
     c.enabled=c.touchpadAsBack=c.muteToggles=c.logEvents=true;c.allowBackground=false;c.deadzone=0;c.controller=0;
     c.triggers=c.weaponTriggers=c.fireAtClick=c.drivingTriggers=c.speedResponse=true;c.weaponStrength=70;c.drivingStrength=25;
     c.vibration=65;c.drivingVibration=60;c.gameRumble=c.shots=c.damage=c.explosions=c.crashes=c.terrain=c.xboxRumble=true;c.hdHaptics=c.footsteps=c.soundShots=true;
     c.lightbar=c.healthColor=c.armourLeds=c.speedometer=c.policeFlashes=true;c.brightness=100;c.speedKmh=160;c.menu={0,80,200};menuOpenWith=0;menuKey=VK_F11;menuLanguage=0;
+}
+void loadSettings(){
+    Settings& c=cfg;setDefaults();
     readPath=iniPath;readSettings();
-    bool user=*userIni&&GetFileAttributesW(userIni)!=INVALID_FILE_ATTRIBUTES;if(user){readPath=userIni;readSettings();}
+    bool user=*settingsIni&&_wcsicmp(settingsIni,iniPath)!=0&&GetFileAttributesW(settingsIni)!=INVALID_FILE_ATTRIBUTES;if(user){readPath=settingsIni;readSettings();}
     logf("settings%s: triggers=%d weapons=%d%% fireAtClick=%d driving=%d%% speedResponse=%d vibration=%d%% (driving %d%%) gameRumble=%d xbox=%d lightbar=%d brightness=%d%% police=%d speedometer=%dkm/h touchpadBack=%d muteToggles=%d menu=%d key=%d",
-        user?" (with the player's file)":"",c.triggers,c.weaponStrength.load(),c.fireAtClick,c.drivingStrength.load(),c.speedResponse,c.vibration.load(),c.drivingVibration,c.gameRumble,c.xboxRumble,c.lightbar,c.brightness,
+        user?" (with the Documents file)":"",c.triggers,c.weaponStrength.load(),c.fireAtClick,c.drivingStrength.load(),c.speedResponse,c.vibration.load(),c.drivingVibration,c.gameRumble,c.xboxRumble,c.lightbar,c.brightness,
         c.policeFlashes,c.speedKmh,c.touchpadAsBack,c.muteToggles,menuOpenWith,menuKey);
 }
 
@@ -348,7 +353,7 @@ float scaleV(float v){return v*cfg.vibration/100.f;}
 
 void resync(uintptr_t ped){
     tr.ped=ped;tr.slot=std::min<int>(mem<BYTE>(ped+PED_WEAPON_SLOT),12);uintptr_t w=ped+PED_WEAPONS+tr.slot*WEAPON_SIZE;
-    tr.type=mem<unsigned>(w);tr.state=mem<unsigned>(w+4);tr.total=mem<unsigned>(w+0xC);tr.nextShot=mem<unsigned>(w+0x10);
+    tr.type=ds::profile_type(mem<unsigned>(w),tr.slot);tr.state=mem<unsigned>(w+4);tr.total=mem<unsigned>(w+0xC);tr.nextShot=mem<unsigned>(w+0x10);
     tr.hp=mem<float>(ped+PED_HEALTH)+mem<float>(ped+PED_ARMOUR);tr.veh=0;tr.vhp=0;tr.airSince=0;
     for(int i=0;i<EXPLOSION_COUNT;++i)tr.explosion[i]=mem<unsigned>(EXPLOSIONS+i*EXPLOSION_SIZE+0x2C);
     for(bool& m:tr.projMolotov)m=false;
@@ -390,6 +395,8 @@ ds::OutState computeOut(unsigned long long now,int& fp){
     int slot=mem<BYTE>(ped+PED_WEAPON_SLOT);if(slot>12)slot=0;
     uintptr_t w=ped+PED_WEAPONS+slot*WEAPON_SIZE;
     unsigned type=mem<unsigned>(w),state=mem<unsigned>(w+4),clip=mem<unsigned>(w+8),total=mem<unsigned>(w+0xC),nextShot=mem<unsigned>(w+0x10);
+    {unsigned raw=type;type=ds::profile_type(raw,slot);static unsigned loggedAddon=0;
+        if(raw!=type&&raw!=loggedAddon){loggedAddon=raw;logf("add-on weapon type %u in slot %d: using the %s profile",raw,slot,ds::weapon_profile(type).name);}}
     const ds::WeaponProfile& prof=ds::weapon_profile(type);
     bool sameGun=slot==tr.slot&&type==tr.type;
     unsigned shots=0;
@@ -699,12 +706,12 @@ bool writeReport(const ds::OutState& s,bool release,OVERLAPPED& ov){
 }
 // Mute combos: tap = adaptive triggers on/off; hold Mute and press the D-pad: up/down = vibration +-10 %,
 // right = open/close the menu (default shortcut). The lightbar turns white and the player LEDs show the new vibration
-// level for 1.5 s; values are saved to the player's file in Documents.
+// level for 1.5 s; values are saved to the mod INI.
 // Street Talk SA sets bit 0x4000 of DisablePlayerControls while its settings menu is open (it navigates with the
 // D-pad), so the D-pad combos that open this menu stay off until it clears the bit.
 bool otherModMenu(){return gameOk&&(mem<uint16_t>(PAD0_DISABLE_CONTROLS)&0x4000);}
 bool muteCombo=false;unsigned long long adjustAt=0,lastDownTap=0;int adjustLevel=0;bool adjustRumble=false;
-void saveSetting(const wchar_t* section,const wchar_t* key,int value){if(!*userIni)return;wchar_t v[16];swprintf_s(v,L"%d",value);WritePrivateProfileStringW(section,key,v,userIni);}
+void saveSetting(const wchar_t* section,const wchar_t* key,int value){if(!*settingsIni)return;wchar_t v[16];swprintf_s(v,L"%d",value);WritePrivateProfileStringW(section,key,v,settingsIni);}
 void muteAdjust(const ds::Input& in){
     if(in.mute){
         bool fresh=in.hat!=8&&(!lastInput.mute||lastInput.hat!=in.hat);
@@ -771,9 +778,16 @@ void logAudioDevices(){
 DWORD WINAPI deviceThread(void*){
     logAudioDevices();
     {HANDLE a=CreateThread(nullptr,0,audioThread,nullptr,0,nullptr);if(a)CloseHandle(a);}   // HD haptics stream (waits for the pad)
-    // The player's settings file lives next to the game saves (Documents\GTA San Andreas User Files); MO2 never touches it.
-    {wchar_t docs[MAX_PATH]{};if(SUCCEEDED(SHGetFolderPathW(nullptr,CSIDL_PERSONAL,nullptr,0,docs))){wchar_t dir[MAX_PATH];swprintf_s(dir,L"%s\\GTA San Andreas User Files",docs);
-        CreateDirectoryW(dir,nullptr);swprintf_s(userIni,L"%s\\Aleks DualSense SA.ini",dir);loadSettings();}}
+    // Up to 2.2 menu changes lived in Documents\GTA San Andreas User Files and hid the mod INI. Now the mod INI is the
+    // only file: an old Documents file is merged into it once and renamed to .old. Documents stays the fallback when the
+    // game folder is read-only.
+    {wchar_t docs[MAX_PATH]{};if(SUCCEEDED(SHGetFolderPathW(nullptr,CSIDL_PERSONAL,nullptr,0,docs))){wchar_t dir[MAX_PATH],old[MAX_PATH];swprintf_s(dir,L"%s\\GTA San Andreas User Files",docs);
+        swprintf_s(old,L"%s\\Aleks DualSense SA.ini",dir);
+        if(!*settingsIni){CreateDirectoryW(dir,nullptr);wcscpy_s(settingsIni,old);logf("the mod folder is read-only: settings changed in game are saved to %ls",old);loadSettings();}
+        else if(GetFileAttributesW(old)!=INVALID_FILE_ATTRIBUTES){
+            readPath=old;readSettings();saveUserSettings();
+            wchar_t renamed[MAX_PATH];swprintf_s(renamed,L"%s.old",old);MoveFileExW(old,renamed,MOVEFILE_REPLACE_EXISTING);
+            logf("settings from the old Documents file moved into the mod INI (old file renamed to %ls)",renamed);}}}
     // Load the XInput DLLs the readers in this process use, so they are bridged before the first frame.
     for(const wchar_t* name:{L"xinput1_3.dll",L"xinput1_4.dll"})if(!GetModuleHandleW(name))LoadLibraryW(name);
     hookLoadedDlls();
@@ -842,8 +856,12 @@ extern "C" BOOL WINAPI DllMain(HMODULE module,DWORD reason,LPVOID reserved){
         InitializeCriticalSection(&logLock);InitializeCriticalSection(&stateLock);InitializeCriticalSection(&callerLock);InitializeCriticalSection(&hookLock);InitializeCriticalSection(&hapLock);
         GetModuleFileNameW(self,folder,MAX_PATH);wchar_t* slash=wcsrchr(folder,L'\\');if(slash)*slash=0;
         swprintf_s(iniPath,L"%s\\Aleks.DualSense.SA.ini",folder);swprintf_s(logPath,L"%s\\Aleks.DualSense.SA.log",folder);
-        wchar_t prev[MAX_PATH];swprintf_s(prev,L"%s\\Aleks.DualSense.SA.prev.log",folder);MoveFileExW(logPath,prev,MOVEFILE_REPLACE_EXISTING);
-        logf("Alek's DualSense SA 2.2 (build %s %s), game thread %lu",__DATE__,__TIME__,static_cast<unsigned long>(mainThread));
+        wchar_t prev[MAX_PATH];swprintf_s(prev,L"%s\\Aleks.DualSense.SA.prev.log",folder);
+        cfg.logEvents=GetPrivateProfileIntW(L"General",L"LogEvents",1,iniPath)!=0;   // decided before the first line
+        if(cfg.logEvents)MoveFileExW(logPath,prev,MOVEFILE_REPLACE_EXISTING);else{DeleteFileW(logPath);DeleteFileW(prev);}
+        {HANDLE f=CreateFileW(iniPath,GENERIC_WRITE,FILE_SHARE_READ|FILE_SHARE_WRITE,nullptr,OPEN_ALWAYS,FILE_ATTRIBUTE_NORMAL,nullptr);   // can the menu save next to the ASI?
+            if(f!=INVALID_HANDLE_VALUE){CloseHandle(f);wcscpy_s(settingsIni,iniPath);}}
+        logf("Alek's DualSense SA 2.2.1 (build %s %s), game thread %lu",__DATE__,__TIME__,static_cast<unsigned long>(mainThread));
         loadSettings();buildMenuRows();
         if(!cfg.enabled){log("disabled in the INI ([General] Enabled=0); XInput untouched");return TRUE;}
         gameOk=readable(VERSION_PROBE,sizeof versionBytes)&&std::memcmp(reinterpret_cast<const void*>(VERSION_PROBE),versionBytes,sizeof versionBytes)==0;

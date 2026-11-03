@@ -1,4 +1,4 @@
-ALEK'S DUALSENSE SA 2.2
+ALEK'S DUALSENSE SA 2.2.1
 Native DualSense for GTA San Andreas (PC 1.0 US) / DualSense nativo para GTA San Andreas (PC 1.0 US)
 https://github.com/Alexgg1014/aleks-dualsense-sa
 
@@ -40,8 +40,9 @@ WHAT IT DOES
 - Effects pause in menus, cutscenes and Photo Mode, and the triggers are always released when you leave.
 
 SETTINGS
-- In game through the menu. They are saved to Documents\GTA San Andreas User Files\Aleks DualSense SA.ini.
-- Defaults are in Aleks.DualSense.SA.ini.
+- In game through the menu, or in Aleks.DualSense.SA.ini. Both are the same file: the menu saves to the INI.
+- Settings from older versions (Documents\GTA San Andreas User Files) are moved into the INI automatically.
+- [General] LogEvents=0 turns the log file off.
 
 TROUBLESHOOTING
 - Nothing works: check the log, Aleks.DualSense.SA.log, next to the ASI.
@@ -92,8 +93,9 @@ QUÉ HACE
 - Los efectos se pausan en menús, cinemáticas y el Modo Foto, y los gatillos siempre se sueltan al salir.
 
 AJUSTES
-- En el juego desde el menú. Se guardan en Documentos\GTA San Andreas User Files\Aleks DualSense SA.ini.
-- Los valores por defecto están en Aleks.DualSense.SA.ini.
+- En el juego desde el menú, o en Aleks.DualSense.SA.ini. Es el mismo archivo: el menú guarda en el INI.
+- Los ajustes de versiones anteriores (Documentos\GTA San Andreas User Files) pasan al INI solos.
+- [General] LogEvents=0 apaga el archivo de log.
 
 PROBLEMAS
 - No funciona nada: revisa el log, Aleks.DualSense.SA.log, junto al ASI.

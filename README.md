@@ -43,7 +43,7 @@ Native **DualSense** support for **GTA San Andreas (PC 1.0 US)**: adaptive trigg
 2. With Modloader, copy the `Aleks DualSense SA` folder into `modloader`. Otherwise, copy `Aleks.DualSense.SA.asi` and `Aleks.DualSense.SA.ini` into the game folder.
 3. Plug in the controller (or pair it over Bluetooth) and start the game.
 
-**Controls:** Mute + Right opens the menu (or F11). Mute + Up/Down changes the vibration. A tap on Mute turns the adaptive triggers on or off. On a DualShock 4, hold PS instead of Mute. Settings changed in game are saved to `Documents\GTA San Andreas User Files\Aleks DualSense SA.ini`. Full instructions are in `LEEME - README.txt` inside the zip.
+**Controls:** Mute + Right opens the menu (or F11). Mute + Up/Down changes the vibration. A tap on Mute turns the adaptive triggers on or off. On a DualShock 4, hold PS instead of Mute. Settings changed in game are saved to `Aleks.DualSense.SA.ini`, the same file you can edit by hand (2.2.1). Full instructions are in `LEEME - README.txt` inside the zip.
 
 If something breaks, open an issue and attach `Aleks.DualSense.SA.log` from the mod folder.
 

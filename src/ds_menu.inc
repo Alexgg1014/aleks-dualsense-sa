@@ -21,13 +21,13 @@ const char* const translations[][2]={
     {"Brillo","Brightness"},{"Color según la vida","Colour by health"},{"LEDs = armadura","LEDs = armour"},{"Velocímetro en vehículo","Speedometer in vehicles"},
     {"Velocímetro lleno a","Speedometer full at"},{"Luces de policía","Police lights"},
     {"Sentir gatillo","Feel a trigger"},{"Probar háptica","Try haptics"},{"Pulso de vibración","Rumble pulse"},{"Restablecer todo","Reset everything"},
-    {"Abrir menú con","Open menu with"},{"Mute apaga gatillos","Mute toggles triggers"},{"Eventos en el log","Log events"},{"Idioma","Language"},
+    {"Abrir menú con","Open menu with"},{"Mute apaga gatillos","Mute toggles triggers"},{"Archivo de log","Log file"},{"Idioma","Language"},
     {"Sí","Yes"},{"Pulsa X","Press X"},{"Pulsa X otra vez","Press X again"},{"conectado por USB","connected over USB"},{"sin control","no controller"},
     {"DualShock 4 por USB","DualShock 4 over USB"},{"por Bluetooth","over Bluetooth"},{"batería","battery"},
     {"Bluetooth: vibración clásica. La háptica HD necesita el cable.","Bluetooth: classic rumble. HD haptics need the USB cable."},{"El DualShock 4 no tiene gatillos adaptativos ni háptica HD.","The DualShock 4 has no adaptive triggers or HD haptics."},
     {"Gatillos: se sienten al momento. Háptica: elige y pulsa X.","Triggers: felt right away. Haptics: pick one and press X."},
     {"Mute + arriba/abajo también cambia la vibración sin abrir el menú.","Mute + up/down also changes vibration without the menu."},
-    {"Se guarda en Documentos\\GTA San Andreas User Files.","Saved in Documents\\GTA San Andreas User Files."},
+    {"Se guarda en Aleks.DualSense.SA.ini.","Saved to Aleks.DualSense.SA.ini."},
     {"Los cambios se sienten al momento.","Changes apply right away."},
     {"Pestañas","Tabs"},{"Ajustar","Adjust"},{"Probar","Test"},{"Cerrar","Close"},
 };
@@ -99,7 +99,7 @@ void buildMenuRows(){
         MenuRow{TAB_OPTIONS,"Abrir menú con",M_CHOICE,nullptr,nullptr,&menuOpenWith,0,2,1,openChoices,3,A_NONE,L"Menu",L"OpenWith"},
         toggle(TAB_OPTIONS,"Mute apaga gatillos",&c.muteToggles,L"General",L"MuteTogglesTriggers"),
         toggle(TAB_OPTIONS,"Touchpad = Select",&c.touchpadAsBack,L"General",L"TouchpadAsBack"),
-        toggle(TAB_OPTIONS,"Eventos en el log",&c.logEvents,L"General",L"LogEvents"),
+        toggle(TAB_OPTIONS,"Archivo de log",&c.logEvents,L"General",L"LogEvents"),
         MenuRow{TAB_OPTIONS,"Idioma",M_CHOICE,nullptr,nullptr,&menuLanguage,0,2,1,languageChoices,3,A_NONE,L"Menu",L"Language"},
     };
 }
@@ -110,11 +110,11 @@ std::string rowText(const MenuRow& r){
     switch(r.kind){case M_TOGGLE:return loc(v?"Sí":"No");case M_PERCENT:std::snprintf(b,sizeof b,"%d %%",v);return b;
         case M_RANGE:std::snprintf(b,sizeof b,"%d km/h",v);return b;case M_CHOICE:return loc(r.choices[std::clamp(v,0,r.count-1)]);default:return "";}
 }
-// Settings the player changes in game live outside the game folder (userIni), so an MO2 sync never overwrites them.
+// Menu changes are written back to the mod INI (Documents only if the game folder is read-only); comments are kept.
 void saveUserSettings(){
-    if(!*userIni)return;
-    for(const MenuRow& r:menuRows)if(r.section){wchar_t v[16];swprintf_s(v,L"%d",rowValue(r));WritePrivateProfileStringW(r.section,r.key,v,userIni);}
-    logf("settings saved to %ls",userIni);
+    if(!*settingsIni)return;
+    for(const MenuRow& r:menuRows)if(r.section){wchar_t v[16];swprintf_s(v,L"%d",rowValue(r));WritePrivateProfileStringW(r.section,r.key,v,settingsIni);}
+    logf("settings saved to %ls",settingsIni);
 }
 
 // ---------- drawing ----------
@@ -220,7 +220,7 @@ void openMenu(bool open){
     menuOpen=open;confirmDefaults=false;
     if(open){log("menu opened");selY=tabX=-1;}else{log("menu closed");padHold=true;if(menuDirty){saveUserSettings();menuDirty=false;}}
 }
-void loadSettings();   // dualsense.cpp: defaults -> mod INI -> user INI
+void setDefaults();   // dualsense.cpp: the code defaults
 void menuInput(unsigned long long now){
     ds::Input in;EnterCriticalSection(&stateLock);in=lastInput;LeaveCriticalSection(&stateLock);
     auto pressed=[&](bool cur,bool prev){return cur&&!prev;};
@@ -252,7 +252,7 @@ void menuInput(unsigned long long now){
         else if(r.action==A_HAPTIC){if(hdActive)playHapticTest(hapticChoice);else log("menu: haptic test needs HD haptics (see the log for why it is off)");}
         else if(r.action==A_DEFAULTS){
             if(!confirmDefaults)confirmDefaults=true;
-            else{confirmDefaults=false;if(*userIni)DeleteFileW(userIni);loadSettings();menuDirty=false;log("menu: settings restored to the mod INI");}
+            else{confirmDefaults=false;setDefaults();saveUserSettings();menuDirty=false;log("menu: settings restored to the defaults");}
         }
     }
     menuPrev=in;
@@ -308,7 +308,7 @@ void drawMenu(IDirect3DDevice9* dev,float w,float h){
         padBluetooth&&(menuTab==TAB_VIBRATION||menuTab==TAB_TEST)?"Bluetooth: vibración clásica. La háptica HD necesita el cable.":
         menuTab==TAB_TEST?"Gatillos: se sienten al momento. Háptica: elige y pulsa X.":
         menuTab==TAB_VIBRATION?"Mute + arriba/abajo también cambia la vibración sin abrir el menú.":
-        menuTab==TAB_OPTIONS?"Se guarda en Documentos\\GTA San Andreas User Files.":"Los cambios se sienten al momento.";
+        menuTab==TAB_OPTIONS?"Se guarda en Aleks.DualSense.SA.ini.":"Los cambios se sienten al momento.";
     text(dev,x0+pad,by+rowH*static_cast<float>(std::max(count,7))+10*k,note,SA_DIM,16*k);
     float fy=y0+ph-footH,fx=x0+pad,is=22*k;rect(dev,x0+pad,fy,pw-pad*2,1*k,withAlpha(ACCENT,0x50));
     auto label=[&](const char* t){text(dev,fx,fy+13*k,t,SA_DIM,17*k);fx+=textW(t,17*k)+18*k;};

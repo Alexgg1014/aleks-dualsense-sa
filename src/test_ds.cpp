@@ -113,6 +113,8 @@ int main(){
     CHECK(std::string_view(weapon_profile(43).name)=="camera"&&std::string_view(weapon_profile(46).name)=="none");
     CHECK(std::string_view(weapon_profile(9).name)=="chainsaw"&&std::string_view(weapon_profile(16).name)=="grenade");
     CHECK(std::string_view(weapon_profile(200).name)=="none");
+    CHECK(profile_type(31,5)==31&&profile_type(44,0)==44&&profile_type(70,2)==22&&profile_type(71,3)==25&&profile_type(72,4)==29);
+    CHECK(profile_type(73,5)==30&&profile_type(74,6)==33&&profile_type(75,1)==75&&std::string_view(weapon_profile(profile_type(80,5)).name)=="ak47");
     for(unsigned t=0;t<47;++t){const WeaponProfile& w=weapon_profile(t);
         if(w.kind==K_CLICK||w.kind==K_HEAVY)CHECK(w.a>=2&&w.a<w.b&&w.b<=8);
         WeaponState s;s.type=t;TriggerPair tp=weapon_triggers(s,70,true);
